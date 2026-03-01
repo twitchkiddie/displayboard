@@ -2,7 +2,7 @@
   "location": {
     "name": "Your City, State",
     "latitude": 40.7128,
-    "longitude": -74.0060,
+    "longitude": -74.006,
     "timezone": "America/New_York"
   },
   "calendars": [
@@ -40,5 +40,6 @@
   "photos": {
     "shuffle": true
   },
-  "photoAlbumToken": "YOUR_ICLOUD_ALBUM_TOKEN"
+  "photoAlbumToken": "YOUR_ICLOUD_ALBUM_TOKEN",
+  "adminPin": "123456"
 }
