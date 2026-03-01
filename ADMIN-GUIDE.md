@@ -4,7 +4,7 @@ Your dashboard now has a **local web-based admin panel** for easy configuration!
 
 ## 🚀 Access the Admin Panel
 
-**URL:** `http://<PI_IP>:3000/admin.html`
+**URL:** `http://192.168.2.26:3000/admin.html`
 
 Or from the Mac mini:
 ```bash
@@ -32,9 +32,9 @@ Change where weather data comes from:
 4. Paste into admin panel
 
 **Example locations:**
-- New York, NY: `40.7128, -74.0060`
+- Fairport, NY: `43.09867, -77.44194`
 - Las Vegas, NV: `36.1699, -115.1398`
-- Chicago, IL: `41.8781, -87.6298`
+- Rochester, NY: `43.1566, -77.6088`
 
 ---
 
@@ -48,14 +48,14 @@ Enable/disable calendar sources and change their colors:
 
 **Current calendars:**
 - ✅ Family (Magenta #e91e63)
-- ✅ Kids Sports (Cyan #00bcd4)  
-- ✅ Your Calendar (Orange #ff9800)
+- ✅ Elise Swim (Cyan #00bcd4)  
+- ✅ Corinne Crew (Orange #ff9800)
 - ❌ Work (Purple #9c27b0) - Disabled
 
 **Add a new calendar:**
 ```bash
 # Store calendar URL in macOS Keychain
-security add-generic-password -a displayboard -s "cal-mycalendar" -w "https://calendar-url-here"
+security add-generic-password -a jarvisbot -s "cal-mycalendar" -w "https://calendar-url-here"
 
 # Then edit config.json and add:
 {
@@ -110,11 +110,11 @@ Configure photo source:
 mkdir ~/Library/Mobile\ Documents/com~apple~CloudDocs/DashboardPhotos
 
 # Remove default photos folder
-rm -rf /home/pi/displayboard/photos
+rm -rf /Users/jarvisbot/.openclaw/workspace/dakboard-local/photos
 
 # Symlink iCloud folder
 ln -s ~/Library/Mobile\ Documents/com~apple~CloudDocs/DashboardPhotos \
-  /home/pi/displayboard/photos
+  /Users/jarvisbot/.openclaw/workspace/dakboard-local/photos
 ```
 
 Now photos added to iCloud Drive automatically appear on dashboard!
@@ -158,16 +158,16 @@ Restarts the Node.js server (applies all config changes immediately)
 
 All settings are stored in:
 ```
-/home/pi/displayboard/config.json
+/Users/jarvisbot/.openclaw/workspace/dakboard-local/config.json
 ```
 
 **You can edit this directly** if you prefer:
 ```json
 {
   "location": {
-    "name": "Your City, ST",
-    "latitude": 40.7128,
-    "longitude": -74.0060,
+    "name": "Fairport, NY",
+    "latitude": 43.09867,
+    "longitude": -77.44194,
     "timezone": "America/New_York"
   },
   "calendars": [
@@ -200,8 +200,8 @@ All settings are stored in:
 After manual edits:
 ```bash
 # Restart server to apply
-pkill -f "displayboard/server.js"
-cd /home/pi/displayboard
+pkill -f "dakboard-local/server.js"
+cd /Users/jarvisbot/.openclaw/workspace/dakboard-local
 ./start.sh
 ```
 
@@ -213,26 +213,26 @@ Calendar URLs are stored in **macOS Keychain** for security (not in config.json)
 
 ### View stored calendar URL:
 ```bash
-security find-generic-password -a displayboard -s "cal-family" -w
+security find-generic-password -a jarvisbot -s "cal-family" -w
 ```
 
 ### Add new calendar URL:
 ```bash
-security add-generic-password -a displayboard -s "cal-newcal" -w "https://calendar-url"
+security add-generic-password -a jarvisbot -s "cal-newcal" -w "https://calendar-url"
 ```
 
 ### Update existing calendar URL:
 ```bash
 # Delete old
-security delete-generic-password -a displayboard -s "cal-family"
+security delete-generic-password -a jarvisbot -s "cal-family"
 
 # Add new
-security add-generic-password -a displayboard -s "cal-family" -w "https://new-url"
+security add-generic-password -a jarvisbot -s "cal-family" -w "https://new-url"
 ```
 
 ### List all dashboard calendar keys:
 ```bash
-security find-generic-password -a displayboard | grep "svce.*cal-"
+security find-generic-password -a jarvisbot | grep "svce.*cal-"
 ```
 
 ---
@@ -245,7 +245,7 @@ The admin panel works perfectly on Raspberry Pi!
 
 1. **Copy dashboard folder to Pi:**
 ```bash
-scp -r displayboard pi@raspberrypi.local:/home/pi/
+scp -r dakboard-local pi@raspberrypi.local:/home/pi/
 ```
 
 2. **Install Node.js on Pi:**
@@ -256,14 +256,14 @@ sudo apt-get install -y nodejs
 
 3. **Install dependencies:**
 ```bash
-cd /home/pi/displayboard
+cd /home/pi/dakboard-local
 npm install
 ```
 
 4. **Copy config and credentials:**
 ```bash
 # Export keychain entries from Mac
-security find-generic-password -a displayboard -s "cal-family" -w > family-cal-url.txt
+security find-generic-password -a jarvisbot -s "cal-family" -w > family-cal-url.txt
 
 # On Pi, store in environment or config file
 # (Pi doesn't have macOS Keychain, so store URLs directly in config or .env file)
@@ -310,7 +310,7 @@ Then modify `calendar-all.js` to read from config URLs instead of keychain.
 The admin panel has **no authentication** because it's designed for local network access only.
 
 **Security through network isolation:**
-- Only accessible on your local network (<YOUR_LOCAL_NETWORK>)
+- Only accessible on your local network (192.168.2.x)
 - Not exposed to the internet
 - Firewall protects from external access
 
@@ -393,6 +393,6 @@ tail -f /tmp/dakboard.log
 ✅ **Keychain integration** - Secure calendar URL storage  
 ✅ **No cloud dependencies** - Completely local configuration  
 
-**Access:** `http://<PI_IP>:3000/admin.html`
+**Access:** `http://192.168.2.26:3000/admin.html`
 
 Now you can configure your dashboard from any device on your network! 🎛️✨

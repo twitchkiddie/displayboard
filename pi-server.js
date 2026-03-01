@@ -413,7 +413,7 @@ function handleSyncPhotos(req, res) {
   if (!requireAuth(req, res)) return;
   const syncScript = path.join(__dirname, 'icloud-album-sync.js');
   const { exec: execAsync } = require('child_process');
-  const token = config.photoAlbumToken;
+  const token = config.photoAlbumToken || 'B0vG4TcsmGKfUcj';
   execAsync(`node "${syncScript}" "${token}" "${path.join(__dirname, 'photos')}"`, { timeout: 300000 }, (err, stdout, stderr) => {
     if (err) console.error('Photo sync error:', err.message);
     else console.log('📸 Photo sync complete:', stdout.trim());
@@ -709,16 +709,19 @@ async function performUpdate() {
       return;
     }
     
-    if (!versionInfo.tarballUrl) {
-      throw new Error('No tarball URL found in release');
+    if (!versionInfo.latest) {
+      throw new Error('No version info found in release');
     }
-    
+
+    // Use direct GitHub download URL (avoids multi-hop API redirects)
+    const downloadUrl = `https://github.com/twitchkiddie/displayboard/archive/refs/tags/v${versionInfo.latest}.tar.gz`;
+
     updateStatus = { state: 'downloading', message: 'Downloading update...', progress: 10 };
-    console.log('📥 Downloading update from:', versionInfo.tarballUrl);
-    
+    console.log('📥 Downloading update from:', downloadUrl);
+
     // Download tarball
     const tarballPath = '/tmp/displayboard-update.tar.gz';
-    await httpDownload(versionInfo.tarballUrl, tarballPath);
+    await httpDownload(downloadUrl, tarballPath);
     
     updateStatus = { state: 'extracting', message: 'Extracting files...', progress: 30 };
     console.log('📦 Extracting tarball...');

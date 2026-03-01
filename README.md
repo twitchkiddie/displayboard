@@ -4,8 +4,9 @@ A self-contained Raspberry Pi dashboard displaying calendar, weather, photos, an
 
 ## Location
 
-- **Pi:** `/home/pi/displayboard/`
-- **GitHub:** `your-github/your-repo` (under `displayboard/`)
+- **Pi:** `/home/pi/pi-dashboard/`
+- **Mac mini backup:** `/Users/jarvisbot/.openclaw/workspace/pi-dashboard/`
+- **GitHub:** `twitchkiddie/jarvisbot-workspace` (under `pi-dashboard/`)
 
 ## Key Files
 
@@ -53,25 +54,25 @@ A self-contained Raspberry Pi dashboard displaying calendar, weather, photos, an
 ```json
 {
   "location": {
-    "name": "Your City, ST",
-    "latitude": 40.7128,
-    "longitude": -74.0060,
+    "name": "Fairport, NY",
+    "latitude": 43.09867,
+    "longitude": -77.44194,
     "timezone": "America/New_York"
   },
   "calendars": [
     { "name": "Family", "enabled": true, "url": "https://..." },
-    { "name": "Kids Sports", "enabled": true, "url": "https://..." },
-    { "name": "Your Calendar", "enabled": true, "url": "https://..." },
+    { "name": "Elise Swim", "enabled": true, "url": "https://..." },
+    { "name": "Corinne Crew", "enabled": true, "url": "https://..." },
     { "name": "Work", "enabled": false, "url": "https://..." }
   ],
   "display": { "calendarDays": 5 },
-  "photoAlbumToken": "YOUR_ICLOUD_TOKEN"
+  "photoAlbumToken": "B0vG4TcsmGKfUcj"
 }
 ```
 
 ## Process Management
 
-- **PM2** manages the server: `pm2 start/stop/restart displayboard`
+- **PM2** manages the server: `pm2 start/stop/restart pi-dashboard`
 - **PM2 startup** configured to auto-start on boot
 - **Unclutter** hides mouse cursor
 
@@ -108,23 +109,23 @@ This was a critical fix — `node-ical` did not handle Outlook cancellations, ca
 
 ```bash
 # SSH into Pi
-ssh pi@<PI_IP>
+ssh pi@192.168.2.15
 
 # Check server status
 pm2 status
 
 # View logs
-pm2 logs displayboard
+pm2 logs pi-dashboard
 
 # Restart server
-pm2 restart displayboard
+pm2 restart pi-dashboard
 
 # Force dashboard refresh
 curl http://localhost:3000/api/refresh
 
 # Manual photo sync
-cd /home/pi/displayboard && node icloud-album-sync.js YOUR_ICLOUD_TOKEN photos
+cd /home/pi/pi-dashboard && node icloud-album-sync.js B0vG4TcsmGKfUcj photos
 
 # Manual calendar test
-cd /home/pi/displayboard && node calendar-all.js 1 config.json --json
+cd /home/pi/pi-dashboard && node calendar-all.js 1 config.json --json
 ```
