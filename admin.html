@@ -1074,17 +1074,19 @@
         }
     }
 
+    let _wasRestarting = false;
+
     async function pollUpdateStatus() {
         try {
             const r = await fetch('/api/update-status');
             const status = await r.json();
-            
+
             const progressBar = document.getElementById('update-progress-bar');
             const progressText = document.getElementById('update-progress-text');
-            
+
             progressBar.style.width = status.progress + '%';
             progressBar.textContent = status.progress + '%';
-            
+
             const stateMessages = {
                 'checking': '🔍 Checking for updates...',
                 'downloading': '📥 Downloading update...',
@@ -1095,15 +1097,20 @@
                 'complete': '✅ Update complete!',
                 'failed': '❌ Update failed'
             };
-            
+
             progressText.textContent = stateMessages[status.state] || status.state;
-            
-            if (status.state === 'complete') {
+
+            if (status.state === 'restarting') {
+                _wasRestarting = true;
+            } else if (status.state === 'complete') {
                 clearInterval(updateCheckInterval);
-                setTimeout(() => {
-                    showAlert('success', 'Update complete! Reloading page...');
-                    setTimeout(() => location.reload(), 2000);
-                }, 1000);
+                showAlert('success', 'Update complete! Reloading page...');
+                setTimeout(() => location.reload(), 2000);
+            } else if (status.state === 'idle' && _wasRestarting) {
+                // Server came back after restart — update is done
+                clearInterval(updateCheckInterval);
+                showAlert('success', 'Update complete! Reloading page...');
+                setTimeout(() => location.reload(), 2000);
             } else if (status.state === 'failed') {
                 clearInterval(updateCheckInterval);
                 showAlert('error', 'Update failed: ' + status.message);
@@ -1111,7 +1118,11 @@
                 document.getElementById('update-progress').style.display = 'none';
             }
         } catch(e) {
-            console.error('Status poll error:', e);
+            // Network error = server is restarting, keep polling
+            if (_wasRestarting) {
+                const progressText = document.getElementById('update-progress-text');
+                if (progressText) progressText.textContent = '🔄 Waiting for server to restart...';
+            }
         }
     }
 
