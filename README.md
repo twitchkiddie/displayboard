@@ -5,8 +5,8 @@ A self-contained Raspberry Pi dashboard displaying calendar, weather, photos, an
 ## Location
 
 - **Pi:** `/home/pi/pi-dashboard/`
-- **Mac mini backup:** `/Users/jarvisbot/.openclaw/workspace/pi-dashboard/`
-- **GitHub:** `twitchkiddie/jarvisbot-workspace` (under `pi-dashboard/`)
+- **Mac mini backup:** `/home/pi/displayboard/`
+- **GitHub:** `twitchkiddie/displayboard-workspace` (under `pi-dashboard/`)
 
 ## Key Files
 
@@ -54,19 +54,19 @@ A self-contained Raspberry Pi dashboard displaying calendar, weather, photos, an
 ```json
 {
   "location": {
-    "name": "Fairport, NY",
-    "latitude": 43.09867,
-    "longitude": -77.44194,
+    "name": "Your City, ST",
+    "latitude": 40.7128,
+    "longitude": -74.0060,
     "timezone": "America/New_York"
   },
   "calendars": [
     { "name": "Family", "enabled": true, "url": "https://..." },
-    { "name": "Elise Swim", "enabled": true, "url": "https://..." },
-    { "name": "Corinne Crew", "enabled": true, "url": "https://..." },
+    { "name": "Kids Sports", "enabled": true, "url": "https://..." },
+    { "name": "Another Calendar", "enabled": true, "url": "https://..." },
     { "name": "Work", "enabled": false, "url": "https://..." }
   ],
   "display": { "calendarDays": 5 },
-  "photoAlbumToken": "B0vG4TcsmGKfUcj"
+  "photoAlbumToken": "YOUR_ICLOUD_TOKEN"
 }
 ```
 
@@ -109,7 +109,7 @@ This was a critical fix — `node-ical` did not handle Outlook cancellations, ca
 
 ```bash
 # SSH into Pi
-ssh pi@192.168.2.15
+ssh pi@<PI_IP>
 
 # Check server status
 pm2 status
@@ -124,7 +124,7 @@ pm2 restart pi-dashboard
 curl http://localhost:3000/api/refresh
 
 # Manual photo sync
-cd /home/pi/pi-dashboard && node icloud-album-sync.js B0vG4TcsmGKfUcj photos
+cd /home/pi/pi-dashboard && node icloud-album-sync.js YOUR_ICLOUD_TOKEN photos
 
 # Manual calendar test
 cd /home/pi/pi-dashboard && node calendar-all.js 1 config.json --json

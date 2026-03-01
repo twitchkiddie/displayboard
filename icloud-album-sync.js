@@ -10,8 +10,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const ALBUM_TOKEN = process.argv[2] || 'B0vG4TcsmGKfUcj';
-const OUTPUT_DIR = process.argv[3] || path.join(__dirname, '..', 'dakboard-local', 'photos');
+const ALBUM_TOKEN = process.argv[2];
+const OUTPUT_DIR = process.argv[3] || path.join(__dirname, 'photos');
 
 function httpsPost(url, body) {
   return new Promise((resolve, reject) => {

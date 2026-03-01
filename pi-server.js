@@ -413,7 +413,7 @@ function handleSyncPhotos(req, res) {
   if (!requireAuth(req, res)) return;
   const syncScript = path.join(__dirname, 'icloud-album-sync.js');
   const { exec: execAsync } = require('child_process');
-  const token = config.photoAlbumToken || 'B0vG4TcsmGKfUcj';
+  const token = config.photoAlbumToken;
   execAsync(`node "${syncScript}" "${token}" "${path.join(__dirname, 'photos')}"`, { timeout: 300000 }, (err, stdout, stderr) => {
     if (err) console.error('Photo sync error:', err.message);
     else console.log('📸 Photo sync complete:', stdout.trim());
