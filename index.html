@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Dashboard</title>
+    <link rel="stylesheet" href="fonts/weather-icons.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Background Photo Slideshow -->
+    <div id="photo-background"></div>
+    <div id="photo-background-next"></div>
+    <div class="brightness-overlay"></div>
+    
+    <!-- Loading Indicator -->
+    <div id="loading-indicator" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; text-align: center; font-size: 2rem; text-shadow: 0 0 20px rgba(0,0,0,0.9);">
+        <div style="font-size: 3rem; margin-bottom: 1rem; animation: pulse 2s ease-in-out infinite;">⏳</div>
+        <div>Loading dashboard...</div>
+    </div>
+    
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+    </style>
+
+    <!-- Clock (Top Left) -->
+    <div id="clock">
+        <div id="time">--:--</div>
+        <div id="date">Loading...</div>
+    </div>
+
+    <!-- Calendar Grid (5 columns across top) -->
+    <div id="calendar">
+        <div class="calendar-column" data-day="0">
+            <div class="column-header">
+                <div class="column-date">--</div>
+                <div class="column-day">Loading</div>
+            </div>
+            <div class="column-events"></div>
+        </div>
+        <div class="calendar-column" data-day="1">
+            <div class="column-header">
+                <div class="column-date">--</div>
+                <div class="column-day">Loading</div>
+            </div>
+            <div class="column-events"></div>
+        </div>
+        <div class="calendar-column" data-day="2">
+            <div class="column-header">
+                <div class="column-date">--</div>
+                <div class="column-day">Loading</div>
+            </div>
+            <div class="column-events"></div>
+        </div>
+        <div class="calendar-column" data-day="3">
+            <div class="column-header">
+                <div class="column-date">--</div>
+                <div class="column-day">Loading</div>
+            </div>
+            <div class="column-events"></div>
+        </div>
+        <div class="calendar-column" data-day="4">
+            <div class="column-header">
+                <div class="column-date">--</div>
+                <div class="column-day">Loading</div>
+            </div>
+            <div class="column-events"></div>
+        </div>
+    </div>
+
+    <!-- Weather Details (Left Bottom) -->
+    <div id="weather-details">
+        <div id="current-temp">--°</div>
+        <div id="feels-like">Feels like --</div>
+        <div id="wind-humidity"></div>
+        <div id="sun-moon">
+            <div><i class="wi wi-sunrise" style="color:#FFD700;"></i> <span id="sunrise">--</span></div>
+            <div><i class="wi wi-sunset" style="color:#FF6347;"></i> <span id="sunset">--</span></div>
+            <div><i class="wi wi-moon-14 moon-icon" style="color:#E8E8D0;"></i> <span id="moon-phase">--</span></div>
+        </div>
+    </div>
+
+    <!-- Weather Forecast (Bottom) -->
+    <div id="weather-forecast">
+        <div class="forecast-day" data-day="0">
+            <div class="forecast-label">Today</div>
+            <div class="forecast-icon"><i class="wi wi-cloudy"></i></div>
+            <div class="forecast-precip"><i class="wi wi-raindrop"></i> --%</div>
+            <div class="forecast-temps"><span class="high">--°</span><span class="low">--°</span></div>
+        </div>
+        <div class="forecast-day" data-day="1">
+            <div class="forecast-label">--</div>
+            <div class="forecast-icon"><i class="wi wi-cloudy"></i></div>
+            <div class="forecast-precip"><i class="wi wi-raindrop"></i> --%</div>
+            <div class="forecast-temps"><span class="high">--°</span><span class="low">--°</span></div>
+        </div>
+        <div class="forecast-day" data-day="2">
+            <div class="forecast-label">--</div>
+            <div class="forecast-icon"><i class="wi wi-cloudy"></i></div>
+            <div class="forecast-precip"><i class="wi wi-raindrop"></i> --%</div>
+            <div class="forecast-temps"><span class="high">--°</span><span class="low">--°</span></div>
+        </div>
+        <div class="forecast-day" data-day="3">
+            <div class="forecast-label">--</div>
+            <div class="forecast-icon"><i class="wi wi-cloudy"></i></div>
+            <div class="forecast-precip"><i class="wi wi-raindrop"></i> --%</div>
+            <div class="forecast-temps"><span class="high">--°</span><span class="low">--°</span></div>
+        </div>
+        <div class="forecast-day" data-day="4">
+            <div class="forecast-label">--</div>
+            <div class="forecast-icon"><i class="wi wi-cloudy"></i></div>
+            <div class="forecast-precip"><i class="wi wi-raindrop"></i> --%</div>
+            <div class="forecast-temps"><span class="high">--°</span><span class="low">--°</span></div>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+    <script src="display-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+photos/
+.calendar-cache.json
+config.json
+package-lock.json
+*.log
+.DS_Store

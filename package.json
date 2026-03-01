@@ -1,0 +1,16 @@
+{
+  "name": "displayboard",
+  "version": "1.0.1",
+  "description": "Pi DisplayBoard - Self-contained dashboard for Raspberry Pi",
+  "main": "pi-server.js",
+  "scripts": {
+    "start": "node pi-server.js"
+  },
+  "dependencies": {
+    "ical.js": "^2.2.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/twitchkiddie/displayboard"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "location": {
+    "name": "Your City, State",
+    "latitude": 40.7128,
+    "longitude": -74.0060,
+    "timezone": "America/New_York"
+  },
+  "calendars": [
+    {
+      "name": "Family Calendar",
+      "enabled": true,
+      "color": "#e91e63",
+      "url": "https://example.com/calendar.ics"
+    },
+    {
+      "name": "Work Calendar",
+      "enabled": true,
+      "color": "#9c27b0",
+      "url": "https://example.com/work-calendar.ics"
+    }
+  ],
+  "display": {
+    "calendarDays": 5,
+    "photoInterval": 30,
+    "calendarRefresh": 5,
+    "weatherRefresh": 10,
+    "nightModeEnabled": true,
+    "nightModeStart": "22:00",
+    "nightModeEnd": "06:00",
+    "nightModeAction": "off",
+    "dimPastEvents": true,
+    "highlightToday": true,
+    "panelOpacity": 20,
+    "crossfadeDuration": 2,
+    "burnInEnabled": true,
+    "burnInInterval": 30,
+    "autoRefreshHour": 3,
+    "staleTimeout": 30
+  },
+  "photos": {
+    "shuffle": true
+  },
+  "photoAlbumToken": "YOUR_ICLOUD_ALBUM_TOKEN"
+}

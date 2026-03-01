@@ -1,0 +1,430 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+}
+
+/* Responsive scaling based on viewport */
+@media screen and (min-width: 1920px) {
+    html { font-size: 20px; }
+}
+
+@media screen and (min-width: 2560px) {
+    html { font-size: 24px; }
+}
+
+@media screen and (min-width: 3840px) {
+    html { font-size: 32px; }
+}
+
+@media screen and (max-width: 1024px) {
+    html { font-size: 12px; }
+}
+
+@media screen and (max-width: 768px) {
+    html { font-size: 10px; }
+}
+
+body {
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    overflow: hidden;
+    background: #000;
+    color: #fff;
+    font-weight: 300;
+    width: 100vw;
+    height: 100vh;
+    cursor: default;
+}
+
+/* Photo Background */
+#photo-background, #photo-background-next {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    z-index: 0;
+    transition: opacity 2s ease-in-out;
+    overflow: hidden;
+}
+
+#photo-background-next {
+    opacity: 0;
+}
+
+/* Photo Style Classes */
+.photo-style-fill {
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+
+.photo-style-fit {
+    background-size: contain !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+
+.photo-style-stretch {
+    background-size: 100% 100% !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+
+.photo-style-zoom {
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    transform: scale(1.2);
+    overflow: hidden;
+}
+
+@keyframes kenburns {
+    0%   { transform: scale(1.0)  translate(0, 0); }
+    25%  { transform: scale(1.15) translate(-2%, -1%); }
+    50%  { transform: scale(1.1)  translate(1%, -2%); }
+    75%  { transform: scale(1.2)  translate(-1%, 1%); }
+    100% { transform: scale(1.0)  translate(0, 0); }
+}
+
+.photo-style-kenburns {
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+    animation: kenburns 30s ease-in-out infinite;
+    overflow: hidden;
+}
+
+#photo-background::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none;
+}
+
+.brightness-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Clock (Top Left) */
+#clock {
+    position: fixed;
+    top: 1.25rem;
+    left: 1.25rem;
+    z-index: 100;
+    text-shadow: 
+        0 0 8px rgba(0,0,0,1),
+        0 0 16px rgba(0,0,0,1),
+        0 0 24px rgba(0,0,0,0.9),
+        2px 2px 12px rgba(0,0,0,1),
+        4px 4px 16px rgba(0,0,0,0.8);
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+#time {
+    font-size: 6rem;
+    font-weight: 100;
+    letter-spacing: -0.15rem;
+    line-height: 1;
+}
+
+#time .seconds-small {
+    font-size: 2.5rem;
+    font-weight: 200;
+    vertical-align: top;
+    opacity: 0.9;
+}
+
+#date {
+    font-size: 1.5rem;
+    font-weight: 300;
+    margin-top: 0.5rem;
+}
+
+/* Calendar Grid (Top Right) */
+#calendar {
+    position: fixed;
+    top: 1.25rem;
+    left: 23.75rem;
+    right: 1.25rem;
+    bottom: 6.5rem;
+    z-index: 10;
+    display: flex;
+    gap: 0.125rem;
+}
+
+.calendar-column {
+    flex: 1;
+    background: transparent;
+    padding: 1rem;
+    overflow-y: hidden;
+    transition: opacity 0.3s ease, filter 0.3s ease;
+    text-shadow: 
+        0 0 8px rgba(0,0,0,1),
+        0 0 16px rgba(0,0,0,1),
+        0 0 24px rgba(0,0,0,0.9),
+        2px 2px 12px rgba(0,0,0,1),
+        4px 4px 16px rgba(0,0,0,0.8);
+}
+
+.calendar-column:first-child {
+    border-top-left-radius: 0.5rem;
+    border-bottom-left-radius: 0.5rem;
+}
+
+.calendar-column:last-child {
+    border-top-right-radius: 0.5rem;
+    border-bottom-right-radius: 0.5rem;
+}
+
+.column-header {
+    text-align: center;
+    margin-bottom: 0.75rem;
+    border-bottom: 0.0625rem solid rgba(255, 255, 255, 0.2);
+    padding-bottom: 0.5rem;
+}
+
+.column-date {
+    font-size: 2.5rem;
+    font-weight: 100;
+    line-height: 1;
+}
+
+.column-day {
+    font-size: 1.125rem;
+    opacity: 0.8;
+    margin-top: 0.25rem;
+}
+
+.calendar-event {
+    margin-bottom: 1rem;
+    padding-left: 0.875rem;
+    border-left: 0.375rem solid #666;
+    font-size: 1.25rem;
+    line-height: 1.5;
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+.calendar-event.all-day {
+    font-weight: 400;
+    margin-bottom: 0.75rem;
+}
+
+.calendar-event.all-day .event-label {
+    opacity: 0.6;
+    font-size: 1.125rem;
+}
+
+/* Calendar colors by source — Removed hardcoded colors to allow config-driven colors */
+
+.event-time {
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+    font-size: 1.1875rem;
+}
+
+.event-title {
+    font-weight: 400;
+    font-size: 1.25rem;
+}
+
+.event-location {
+    font-size: 1.0625rem;
+    opacity: 0.7;
+    margin-top: 0.25rem;
+}
+
+.no-events {
+    text-align: center;
+    opacity: 0.5;
+    margin-top: 1.25rem;
+    font-style: italic;
+    font-size: 1.375rem;
+}
+
+/* Weather Details (Left Bottom) */
+#weather-details {
+    position: fixed;
+    bottom: 1.875rem;
+    left: 1.875rem;
+    z-index: 10;
+    text-shadow: 
+        0 0 8px rgba(0,0,0,1),
+        0 0 16px rgba(0,0,0,1),
+        0 0 24px rgba(0,0,0,0.9),
+        2px 2px 12px rgba(0,0,0,1),
+        4px 4px 16px rgba(0,0,0,0.8);
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+#current-temp {
+    font-size: 7.5rem;
+    font-weight: 100;
+    line-height: 1;
+}
+
+#feels-like {
+    font-size: 1.875rem;
+    margin-top: 0.625rem;
+}
+
+#wind-humidity {
+    font-size: 1.625rem;
+    margin-top: 0.5rem;
+    opacity: 0.9;
+}
+
+#sun-moon {
+    margin-top: 1.5rem;
+    font-size: 1.5rem;
+    line-height: 2.2;
+}
+
+#sun-moon div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#sun-moon .wi {
+    font-size: 1.5rem;
+}
+
+#sun-moon .moon-icon {
+    font-size: 1.8rem;
+    color: #E8E8D0;
+}
+
+/* Weather Forecast (Bottom) */
+#weather-forecast {
+    position: fixed;
+    bottom: 1.25rem;
+    left: 23.75rem;
+    right: 1.25rem;
+    z-index: 10;
+    display: flex;
+    gap: 1.5rem;
+    background: transparent;
+    padding: 0.875rem 1.25rem;
+    border-radius: 0.5rem;
+    transition: opacity 0.3s ease, filter 0.3s ease;
+}
+
+.forecast-day {
+    flex: 1;
+    text-align: center;
+    text-shadow: 
+        0 0 8px rgba(0,0,0,1),
+        0 0 16px rgba(0,0,0,1),
+        0 0 24px rgba(0,0,0,0.9),
+        2px 2px 12px rgba(0,0,0,1),
+        4px 4px 16px rgba(0,0,0,0.8);
+}
+
+.forecast-label {
+    font-size: 1rem;
+    font-weight: 400;
+    margin-bottom: 0.375rem;
+}
+
+.forecast-icon {
+    font-size: 2.5rem;
+    margin: 0.375rem 0;
+    filter: drop-shadow(0 0 6px rgba(0,0,0,0.8)) drop-shadow(0 0 12px rgba(0,0,0,0.5));
+}
+
+.forecast-icon .wi {
+    filter: drop-shadow(0 0 6px rgba(0,0,0,0.8)) drop-shadow(0 0 12px rgba(0,0,0,0.5));
+}
+
+.forecast-precip {
+    font-size: 0.875rem;
+    margin: 0.25rem 0;
+    opacity: 0.8;
+}
+
+.forecast-precip .wi {
+    font-size: 0.875rem;
+}
+
+.forecast-temps {
+    font-size: 1.25rem;
+    font-weight: 300;
+}
+
+.forecast-temps .high {
+    margin-right: 10px;
+}
+
+.forecast-temps .low {
+    opacity: 0.6;
+}
+
+/* Scrollbar for calendar columns */
+/* Calendar overflow is hidden — events that don't fit are clipped cleanly */
+
+/* Loading State */
+.loading {
+    opacity: 0.6;
+    font-style: italic;
+}
+
+/* Display Enhancements */
+.past-event {
+    opacity: 0.4;
+    transition: opacity 0.5s ease;
+}
+
+.today-column {
+    background: transparent !important;
+}
+
+.today-column .column-header {
+    border-bottom-color: rgba(255, 255, 255, 0.4);
+}
+
+.today-column .column-day::after {
+    content: " (Today)";
+    opacity: 0.7;
+    font-size: 0.8em;
+}
+
+/* Accessibility */
+@media (prefers-contrast: high) {
+    .brightness-overlay {
+        background: rgba(0, 0, 0, 0.1);
+    }
+    
+    .calendar-event {
+        border-left-width: 0.5rem;
+    }
+}
+
+/* Print styles */
+@media print {
+    body {
+        background: #000;
+    }
+    
+    .brightness-overlay {
+        display: none;
+    }
+}
