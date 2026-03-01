@@ -197,25 +197,53 @@ echo ""
 
 # Step 10: Get local IP
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+HOSTNAME=$(hostname)
 
 # Final summary
+echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  ✅ DisplayBoard Setup Complete!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "🌐 Dashboard: http://$LOCAL_IP:3000"
-echo "⚙️  Admin:     http://$LOCAL_IP:3000/admin.html"
+echo "🌐 Dashboard:  http://$LOCAL_IP:3000"
+echo "⚙️  Admin panel: http://$LOCAL_IP:3000/admin.html"
 echo ""
-echo "📋 Next steps:"
-echo "   1. Open the admin panel to configure location & calendars"
-echo "   2. Add photos to the photos/ directory"
-echo "   3. (Optional) Add iCloud shared album token for auto photo sync"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  📋 NEXT STEPS — run these now:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "🔧 Useful commands:"
-echo "   pm2 status          - Check if running"
-echo "   pm2 logs            - View logs"
-echo "   pm2 restart all     - Restart server"
-echo "   pm2 stop all        - Stop server"
+echo "  1. Configure PM2 to start on boot (run this once):"
 echo ""
-echo "📖 For help: https://github.com/twitchkiddie/displayboard"
+pm2 startup | grep "sudo env" || echo "     sudo env PATH=\$PATH:/usr/bin pm2 startup systemd -u $USER --hp \$HOME"
 echo ""
+echo "  2. Save the current PM2 process list:"
+echo "     pm2 save"
+echo ""
+echo "  3. Reboot to apply all changes (kiosk mode, hostname, startup):"
+echo "     sudo reboot"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔧 Day-to-day commands:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "  pm2 status                  Check if running"
+echo "  pm2 logs displayboard       View live logs"
+echo "  pm2 restart displayboard    Restart server"
+echo "  pm2 stop displayboard       Stop server"
+echo "  pm2 start displayboard      Start server"
+echo "  sudo reboot                 Full reboot"
+echo "  sudo shutdown -h now        Shutdown"
+echo ""
+echo "📖 Docs: https://github.com/twitchkiddie/displayboard"
+echo ""
+
+# Ask to reboot now
+read -p "🔄 Reboot now to apply all changes? (Y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+  echo "Rebooting in 3 seconds..."
+  sleep 3
+  sudo reboot
+else
+  echo "Remember to reboot before using kiosk mode!"
+fi

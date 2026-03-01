@@ -22,7 +22,11 @@ fi
 # Check for git
 if ! command -v git &>/dev/null; then
   echo "📦 Installing git..."
-  sudo apt-get update -qq && sudo apt-get install -y git
+  sudo apt-get update && sudo apt-get install -y git
+  if ! command -v git &>/dev/null; then
+    echo "❌ Failed to install git. Try: sudo apt-get install -y git"
+    exit 1
+  fi
 fi
 
 # Clone or update
