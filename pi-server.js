@@ -899,6 +899,45 @@ function handleBackupExists(req, res) {
   res.end(JSON.stringify({ exists }));
 }
 
+function handleGetHostname(req, res) {
+  const { execSync } = require('child_process');
+  try {
+    const hostname = execSync('hostname', { encoding: 'utf8' }).trim();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ hostname }));
+  } catch(err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+function handleSetHostname(req, res) {
+  if (!requireAuth(req, res)) return;
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', () => {
+    try {
+      const { hostname } = JSON.parse(body);
+      if (!hostname || !/^[a-z0-9-]+$/.test(hostname)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid hostname' }));
+      }
+      const { execSync } = require('child_process');
+      const oldHostname = execSync('hostname', { encoding: 'utf8' }).trim();
+      // Update /etc/hostname
+      execSync(`echo '${hostname}' | sudo tee /etc/hostname`, { encoding: 'utf8' });
+      // Update /etc/hosts
+      execSync(`sudo sed -i 's/127\.0\.1\.1.*${oldHostname}/127.0.1.1\t${hostname}/g' /etc/hosts`, { encoding: 'utf8' });
+      console.log(\`🖥️  Hostname changed: \${oldHostname} → \${hostname}\`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, hostname }));
+    } catch(err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+  });
+}
+
 function handleVersion(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ version: configVersion }));
@@ -1035,6 +1074,8 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/photos') return handlePhotos(req, res);
   if (pathname === '/api/config' && req.method === 'POST') return handleConfigPost(req, res);
   if (pathname === '/api/config') return handleConfigGet(req, res);
+  if (pathname === '/api/hostname' && req.method === 'GET') return handleGetHostname(req, res);
+  if (pathname === '/api/hostname' && req.method === 'POST') return handleSetHostname(req, res);
   if (pathname === '/api/version') return handleVersion(req, res);
   if (pathname === '/api/refresh') { configVersion++; res.writeHead(200, {'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true,version:configVersion})); return; }
   if (pathname === '/api/refresh-calendar' && req.method === 'POST') return handleRefreshCalendar(req, res);
