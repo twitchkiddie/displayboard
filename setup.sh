@@ -101,13 +101,18 @@ echo ""
 
 # Step 7: Configure PM2 startup (requires sudo)
 echo "🔧 Configuring PM2 startup..."
-PM2_STARTUP=$(pm2 startup | grep sudo | tail -1)
+PM2_STARTUP=$(pm2 startup 2>&1 | grep "sudo env" | tail -1)
 if [ -n "$PM2_STARTUP" ]; then
+  echo "   Running: $PM2_STARTUP"
   eval "$PM2_STARTUP"
+  pm2 save
   echo "   ✓ PM2 startup configured"
 else
-  echo "   ⚠️  Could not auto-configure PM2 startup"
-  echo "   Run: pm2 startup"
+  # Try direct method
+  PM2_BIN=$(which pm2 || echo /usr/lib/node_modules/pm2/bin/pm2)
+  sudo env PATH=$PATH:/usr/bin $PM2_BIN startup systemd -u $USER --hp $HOME
+  pm2 save
+  echo "   ✓ PM2 startup configured"
 fi
 echo ""
 
