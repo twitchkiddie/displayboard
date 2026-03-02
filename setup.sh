@@ -84,13 +84,8 @@ echo ""
 
 # ── Step 7: PM2 boot startup ─────────────────────────────────────────────────
 echo "🔧 Configuring PM2 startup on boot..."
-PM2_CMD=$(pm2 startup 2>&1 | grep "sudo env" | tail -1)
-if [ -n "$PM2_CMD" ]; then
-  eval "$PM2_CMD"
-else
-  PM2_BIN=$(which pm2 2>/dev/null || echo /usr/lib/node_modules/pm2/bin/pm2)
-  sudo env PATH="$PATH:/usr/bin" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME"
-fi
+PM2_BIN=$(which pm2 2>/dev/null || echo /usr/lib/node_modules/pm2/bin/pm2)
+sudo env PATH="$PATH:/usr/bin:/usr/local/bin" "$PM2_BIN" startup systemd -u "$USER" --hp "$HOME" 2>&1 | tail -3
 pm2 save
 echo "   ✓ PM2 will start on boot"
 echo ""
@@ -114,12 +109,22 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
 
   KIOSK_CMD="$CHROMIUM_BIN --kiosk --noerrdialogs --disable-infobars --no-first-run --disable-session-crashed-bubble --disable-translate --password-store=basic --use-mock-keychain --check-for-update-interval=31536000 http://localhost:3000"
 
+  # Clear Chromium crash flag so it doesn't block kiosk on next launch
+  CHROM_PREFS="$HOME/.config/chromium/Default/Preferences"
+  if [ -f "$CHROM_PREFS" ]; then
+    # Replace exit_type Crashed → Normal using sed (avoids python dependency + MAC hash issues)
+    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/g' "$CHROM_PREFS" 2>/dev/null && \
+      echo "   ✓ Chromium crash flag cleared" || \
+      echo "   ⚠️  Could not clear Chromium crash flag (non-fatal)"
+  fi
+
   if command -v labwc &>/dev/null || [ -f /usr/bin/labwc ]; then
     # Wayland / labwc
     echo "   Detected: labwc (Wayland)"
     mkdir -p "$HOME/.config/labwc"
     cat > "$HOME/.config/labwc/autostart" << AUTOEOF
 # DisplayBoard Kiosk
+sleep 3
 $KIOSK_CMD &
 xset s off 2>/dev/null || true
 xset -dpms 2>/dev/null || true
