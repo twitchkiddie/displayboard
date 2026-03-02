@@ -1191,15 +1191,10 @@ function handleWifiConnect(req, res) {
       if (hasNmcli) {
         const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
         if (inApMode) {
-          // In AP mode: write NM connection file directly — nmcli hangs when wlan0 is owned by hostapd
-          const safeName = ssid.replace(/[^a-zA-Z0-9_-]/g, '_');
-          const connFile = `/etc/NetworkManager/system-connections/displayboard-${safeName}.nmconnection`;
-          const wifiSecurity = password ? `\n[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${password}` : '';
-          const nmConn = `[connection]\nid=${ssid}\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=${ssid}${wifiSecurity}\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n`;
-          const tmpFile = '/tmp/displayboard-nm.conf';
-          fs.writeFileSync(tmpFile, nmConn, { mode: 0o600 });
-          execSync(`sudo cp ${tmpFile} ${connFile} && sudo chmod 600 ${connFile}`, { timeout: 5000 });
-          fs.unlinkSync(tmpFile);
+          // In AP mode: save credentials to a local file (no sudo needed).
+          // ap-fallback.sh cleanup (runs as root) picks this up and creates the NM connection before reboot.
+          const pendingFile = path.join(__dirname, 'wifi-pending.json');
+          fs.writeFileSync(pendingFile, JSON.stringify({ ssid, password: password || '' }), { mode: 0o600 });
         } else {
           // Normal mode — use nmcli
           execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });

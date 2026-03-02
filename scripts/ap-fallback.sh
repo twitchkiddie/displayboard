@@ -16,6 +16,29 @@ cleanup() {
     killall hostapd 2>/dev/null || true
     killall dnsmasq 2>/dev/null || true
     rm -f "$FLAG_FILE" "$STATUS_FILE"
+
+    # Apply any pending WiFi credentials saved by the admin panel
+    PENDING_FILE="$(dirname "$0")/../wifi-pending.json"
+    if [ -f "$PENDING_FILE" ]; then
+        echo "Applying pending WiFi credentials..."
+        SSID=$(python3 -c "import json;d=json.load(open('$PENDING_FILE'));print(d['ssid'])" 2>/dev/null)
+        PASS=$(python3 -c "import json;d=json.load(open('$PENDING_FILE'));print(d.get('password',''))" 2>/dev/null)
+        if [ -n "$SSID" ]; then
+            SAFE=$(echo "$SSID" | tr -cd 'a-zA-Z0-9_-')
+            CONN_FILE="/etc/NetworkManager/system-connections/displayboard-${SAFE}.nmconnection"
+            if [ -n "$PASS" ]; then
+                SECURITY="[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${PASS}\n\n"
+            else
+                SECURITY=""
+            fi
+            printf "[connection]\nid=%s\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n%s[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n" \
+                "$SSID" "$SSID" "$SECURITY" > "$CONN_FILE"
+            chmod 600 "$CONN_FILE"
+            echo "WiFi credentials saved for: $SSID"
+            rm -f "$PENDING_FILE"
+        fi
+    fi
+
     # Tell NetworkManager to reclaim wlan0
     nmcli device set wlan0 managed yes 2>/dev/null || true
     echo "AP mode disabled."
