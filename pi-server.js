@@ -1108,24 +1108,50 @@ function handleWifiStatus(req, res) {
 function handleWifiScan(req, res) {
   if (!requireAuth(req, res)) return;
   try {
-    const raw = execSync('sudo iwlist wlan0 scan 2>/dev/null || echo ""', { encoding: 'utf8', timeout: 15000 });
-    const cells = raw.split(/Cell \d+/);
-    const networks = [];
-    const seen = new Set();
-    for (const cell of cells) {
-      const ssidMatch = cell.match(/ESSID:"([^"]*)"/);
-      const signalMatch = cell.match(/Signal level[=:](-?\d+)/);
-      const encMatch = cell.match(/Encryption key:(on|off)/);
-      const wpaMatch = cell.match(/WPA/i);
-      if (ssidMatch && ssidMatch[1]) {
-        const ssid = ssidMatch[1];
-        if (seen.has(ssid)) continue;
+    // Try nmcli first (NetworkManager systems — Raspberry Pi OS Bookworm/Trixie)
+    let networks = [];
+    let usedNmcli = false;
+    try {
+      // Trigger a fresh scan then list results
+      execSync('nmcli device wifi rescan 2>/dev/null || true', { timeout: 5000 });
+      const raw = execSync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list 2>/dev/null', { encoding: 'utf8', timeout: 10000 });
+      const seen = new Set();
+      for (const line of raw.split('\n')) {
+        const parts = line.split(':');
+        if (parts.length < 2) continue;
+        const ssid = parts[0].trim();
+        const signal = parseInt(parts[1]) || 0;
+        const security = parts[2] && parts[2].trim() !== '--' ? parts[2].trim() : 'Open';
+        if (!ssid || seen.has(ssid)) continue;
         seen.add(ssid);
-        let security = 'Open';
-        if (encMatch && encMatch[1] === 'on') security = wpaMatch ? 'WPA' : 'WEP';
-        networks.push({ ssid, signal: signalMatch ? parseInt(signalMatch[1]) : null, security });
+        // Convert nmcli 0-100 signal to approximate dBm
+        const dbm = signal > 0 ? Math.round((signal / 2) - 100) : null;
+        networks.push({ ssid, signal: dbm, security });
+      }
+      usedNmcli = true;
+    } catch(e) { /* fall through to iwlist */ }
+
+    // Fallback: iwlist (older systems / wpa_supplicant)
+    if (!usedNmcli || networks.length === 0) {
+      const raw = execSync('sudo iwlist wlan0 scan 2>/dev/null || echo ""', { encoding: 'utf8', timeout: 15000 });
+      const cells = raw.split(/Cell \d+/);
+      const seen = new Set();
+      for (const cell of cells) {
+        const ssidMatch = cell.match(/ESSID:"([^"]*)"/);
+        const signalMatch = cell.match(/Signal level[=:](-?\d+)/);
+        const encMatch = cell.match(/Encryption key:(on|off)/);
+        const wpaMatch = cell.match(/WPA/i);
+        if (ssidMatch && ssidMatch[1]) {
+          const ssid = ssidMatch[1];
+          if (seen.has(ssid)) continue;
+          seen.add(ssid);
+          let security = 'Open';
+          if (encMatch && encMatch[1] === 'on') security = wpaMatch ? 'WPA' : 'WEP';
+          networks.push({ ssid, signal: signalMatch ? parseInt(signalMatch[1]) : null, security });
+        }
       }
     }
+
     networks.sort((a, b) => (b.signal || -100) - (a.signal || -100));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(networks));
@@ -1146,19 +1172,35 @@ function handleWifiConnect(req, res) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Invalid SSID' }));
       }
-      // Build wpa_supplicant.conf content
-      let networkBlock;
-      if (password && password.length > 0) {
-        networkBlock = `network={\n    ssid="${ssid}"\n    psk="${password}"\n    key_mgmt=WPA-PSK\n}`;
+      // Use nmcli if available (NetworkManager systems), else wpa_supplicant
+      const hasNmcli = (() => { try { execSync('which nmcli', { timeout: 2000 }); return true; } catch(e) { return false; } })();
+
+      if (hasNmcli) {
+        // Remove any existing connection for this SSID
+        execSync(`nmcli connection delete "${ssid}" 2>/dev/null || true`, { timeout: 5000 });
+        // Add new connection
+        if (password && password.length > 0) {
+          execSync(`nmcli device wifi connect "${ssid}" password "${password}" ifname wlan0`, { timeout: 15000 });
+        } else {
+          execSync(`nmcli device wifi connect "${ssid}" ifname wlan0`, { timeout: 15000 });
+        }
+        // Set autoconnect
+        execSync(`nmcli connection modify "${ssid}" connection.autoconnect yes`, { timeout: 5000 });
       } else {
-        networkBlock = `network={\n    ssid="${ssid}"\n    key_mgmt=NONE\n}`;
+        // Fallback: wpa_supplicant.conf
+        let networkBlock;
+        if (password && password.length > 0) {
+          networkBlock = `network={\n    ssid="${ssid}"\n    psk="${password}"\n    key_mgmt=WPA-PSK\n}`;
+        } else {
+          networkBlock = `network={\n    ssid="${ssid}"\n    key_mgmt=NONE\n}`;
+        }
+        const wpaConf = `ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=US\n\n${networkBlock}\n`;
+        const tmpFile = '/tmp/displayboard-wpa.conf';
+        fs.writeFileSync(tmpFile, wpaConf);
+        execSync(`sudo cp ${tmpFile} /etc/wpa_supplicant/wpa_supplicant.conf`);
+        fs.unlinkSync(tmpFile);
       }
-      const wpaConf = `ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=US\n\n${networkBlock}\n`;
-      // Write via temp file to avoid shell injection
-      const tmpFile = '/tmp/displayboard-wpa.conf';
-      fs.writeFileSync(tmpFile, wpaConf);
-      execSync(`sudo cp ${tmpFile} /etc/wpa_supplicant/wpa_supplicant.conf`);
-      fs.unlinkSync(tmpFile);
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, message: 'WiFi credentials saved. Rebooting...' }));
       setTimeout(() => { execAsync('sudo reboot', () => {}); }, 2000);
