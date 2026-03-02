@@ -9,7 +9,7 @@ const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const url = require('url');
-const { execSync } = require('child_process');
+const { execSync, exec: execAsync } = require('child_process');
 
 const PORT = 3000;
 
@@ -1069,9 +1069,120 @@ function handleAuth(req, res) {
   });
 }
 
+// WiFi API handlers
+const CAPTIVE_PORTAL_HOSTS = [
+  'captive.apple.com', 'www.apple.com', 'connectivitycheck.gstatic.com',
+  'connectivitycheck.android.com', 'clients3.google.com',
+  'www.msftconnecttest.com', 'www.msftncsi.com', 'detectportal.firefox.com'
+];
+
+function isApMode() {
+  return fs.existsSync('/tmp/displayboard-ap-mode');
+}
+
+function handleWifiStatus(req, res) {
+  try {
+    if (isApMode()) {
+      let status = { mode: 'ap', ssid: 'DisplayBoard-Setup', ip: '192.168.4.1', signal: null };
+      try { status = JSON.parse(fs.readFileSync('/tmp/displayboard-ap-status.json', 'utf8')); status.signal = null; } catch(e) {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(status));
+    }
+    // Client mode
+    let ssid = '', signal = null, ip = '';
+    try { ssid = execSync("iwgetid -r 2>/dev/null || echo ''", { encoding: 'utf8' }).trim(); } catch(e) {}
+    try {
+      const iw = execSync("iwconfig wlan0 2>/dev/null || echo ''", { encoding: 'utf8' });
+      const m = iw.match(/Signal level[=:](-?\d+)/);
+      if (m) signal = parseInt(m[1]);
+    } catch(e) {}
+    try { ip = execSync("hostname -I 2>/dev/null | awk '{print $1}'", { encoding: 'utf8' }).trim(); } catch(e) {}
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ mode: 'client', ssid, ip, signal }));
+  } catch(e) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message }));
+  }
+}
+
+function handleWifiScan(req, res) {
+  if (!requireAuth(req, res)) return;
+  try {
+    const raw = execSync('sudo iwlist wlan0 scan 2>/dev/null || echo ""', { encoding: 'utf8', timeout: 15000 });
+    const cells = raw.split(/Cell \d+/);
+    const networks = [];
+    const seen = new Set();
+    for (const cell of cells) {
+      const ssidMatch = cell.match(/ESSID:"([^"]*)"/);
+      const signalMatch = cell.match(/Signal level[=:](-?\d+)/);
+      const encMatch = cell.match(/Encryption key:(on|off)/);
+      const wpaMatch = cell.match(/WPA/i);
+      if (ssidMatch && ssidMatch[1]) {
+        const ssid = ssidMatch[1];
+        if (seen.has(ssid)) continue;
+        seen.add(ssid);
+        let security = 'Open';
+        if (encMatch && encMatch[1] === 'on') security = wpaMatch ? 'WPA' : 'WEP';
+        networks.push({ ssid, signal: signalMatch ? parseInt(signalMatch[1]) : null, security });
+      }
+    }
+    networks.sort((a, b) => (b.signal || -100) - (a.signal || -100));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(networks));
+  } catch(e) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+  }
+}
+
+function handleWifiConnect(req, res) {
+  if (!requireAuth(req, res)) return;
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', () => {
+    try {
+      const { ssid, password } = JSON.parse(body);
+      if (!ssid || typeof ssid !== 'string' || ssid.length > 64) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Invalid SSID' }));
+      }
+      // Build wpa_supplicant.conf content
+      let networkBlock;
+      if (password && password.length > 0) {
+        networkBlock = `network={\n    ssid="${ssid}"\n    psk="${password}"\n    key_mgmt=WPA-PSK\n}`;
+      } else {
+        networkBlock = `network={\n    ssid="${ssid}"\n    key_mgmt=NONE\n}`;
+      }
+      const wpaConf = `ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=US\n\n${networkBlock}\n`;
+      // Write via temp file to avoid shell injection
+      const tmpFile = '/tmp/displayboard-wpa.conf';
+      fs.writeFileSync(tmpFile, wpaConf);
+      execSync(`sudo cp ${tmpFile} /etc/wpa_supplicant/wpa_supplicant.conf`);
+      fs.unlinkSync(tmpFile);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, message: 'WiFi credentials saved. Rebooting...' }));
+      setTimeout(() => { execAsync('sudo reboot', () => {}); }, 2000);
+    } catch(e) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+  });
+}
+
 // Router
 const server = http.createServer((req, res) => {
   const pathname = url.parse(req.url, true).pathname;
+
+  // Captive portal detection — must be FAST
+  if (isApMode()) {
+    const host = (req.headers.host || '').split(':')[0];
+    const isOwnHost = host === '192.168.4.1' || host === 'localhost';
+    if (!isOwnHost && host) {
+      res.writeHead(302, { 'Location': 'http://192.168.4.1:3000/admin.html' });
+      return res.end();
+    }
+  }
+
   // First-run: redirect to setup page
   if ((pathname === '/' || pathname === '/index.html') && isFirstRun()) {
     const setupPath = path.join(__dirname, 'setup-welcome.html');
@@ -1109,6 +1220,9 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/update-status') return handleUpdateStatus(req, res);
   if (pathname === '/api/rollback' && req.method === 'POST') return handleRollback(req, res);
   if (pathname === '/api/backup-exists') return handleBackupExists(req, res);
+  if (pathname === '/api/wifi/status' && req.method === 'GET') return handleWifiStatus(req, res);
+  if (pathname === '/api/wifi/scan' && req.method === 'GET') return handleWifiScan(req, res);
+  if (pathname === '/api/wifi/connect' && req.method === 'POST') return handleWifiConnect(req, res);
   serveStatic(req, res);
 });
 

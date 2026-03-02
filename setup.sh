@@ -168,6 +168,11 @@ else
 fi
 echo ""
 
+# ── Step 10: WiFi AP Fallback ─────────────────────────────────────────────────
+echo "🌐 Setting up WiFi AP fallback..."
+bash "$(dirname "$0")/scripts/wifi-setup.sh"
+echo ""
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 
