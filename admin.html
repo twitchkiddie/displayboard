@@ -1269,23 +1269,30 @@
         document.getElementById('auto-update-hour-display').textContent = `${displayHour}:00 ${ampm}`;
     }
 
-    // WiFi functions
+    // WiFi helpers
+    function signalLabel(dbm) {
+        if (dbm == null) return '';
+        if (dbm > -50) return '<span style="color:#4ade80;">● Excellent</span>';
+        if (dbm > -60) return '<span style="color:#4ade80;">● Good</span>';
+        if (dbm > -70) return '<span style="color:#facc15;">● Fair</span>';
+        return '<span style="color:#f87171;">● Weak</span>';
+    }
+
     async function loadWifiStatus() {
+        const info = document.getElementById('wifi-current-info');
         try {
             const r = await fetch('/api/wifi/status');
+            if (!r.ok) throw new Error('status ' + r.status);
             const d = await r.json();
-            const banner = document.getElementById('wifi-status-banner');
-            const info = document.getElementById('wifi-current-info');
             if (d.mode === 'ap') {
-                banner.style.display = 'block';
-                banner.innerHTML = '<div style="color:#f87171;font-size:16px;font-weight:600;">🔴 No WiFi connection — running in setup mode</div><div style="color:#94a3b8;font-size:13px;margin-top:4px;">Connect to a WiFi network below to get online.</div>';
-                info.innerHTML = `<strong>Mode:</strong> Access Point<br><strong>SSID:</strong> ${escapeHtml(d.ssid)}<br><strong>IP:</strong> ${escapeHtml(d.ip)}`;
+                info.innerHTML = `<span style="color:#f87171;font-weight:600;">● No WiFi — running in hotspot mode</span><br><span style="font-size:12px;color:#64748b;">SSID: ${escapeHtml(d.ssid)} &nbsp;·&nbsp; IP: ${escapeHtml(d.ip)}</span>`;
             } else {
-                banner.style.display = 'none';
-                const signalBars = d.signal != null ? (d.signal > -50 ? '▂▄▆█' : d.signal > -60 ? '▂▄▆' : d.signal > -70 ? '▂▄' : '▂') : '';
-                info.innerHTML = `<div style="color:#4ade80;font-size:16px;font-weight:600;margin-bottom:8px;">✅ Connected to ${escapeHtml(d.ssid)}</div><strong>IP:</strong> ${escapeHtml(d.ip)}${d.signal != null ? `<br><strong>Signal:</strong> ${d.signal} dBm ${signalBars}` : ''}`;
+                const sig = d.signal != null ? ` &nbsp;·&nbsp; ${signalLabel(d.signal)} (${d.signal} dBm)` : '';
+                info.innerHTML = `<span style="color:#4ade80;font-weight:600;">● Connected to ${escapeHtml(d.ssid)}</span><br><span style="font-size:12px;color:#64748b;">IP: ${escapeHtml(d.ip)}${sig}</span>`;
             }
-        } catch(e) { console.error('WiFi status error:', e); }
+        } catch(e) {
+            info.innerHTML = '<span style="color:#64748b;">Could not load WiFi status — feature requires AP fallback to be installed.</span>';
+        }
     }
 
     async function scanWifi() {
@@ -1304,16 +1311,16 @@
             }
             list.innerHTML = networks.map(n => {
                 const sig = n.signal != null ? n.signal : -90;
-                const bars = sig > -50 ? '▂▄▆█' : sig > -60 ? '▂▄▆_' : sig > -70 ? '▂▄__' : '▂___';
-                const barsColor = sig > -60 ? '#4ade80' : sig > -70 ? '#facc15' : '#f87171';
+                const sigColor = sig > -60 ? '#4ade80' : sig > -70 ? '#facc15' : '#f87171';
+                const sigText = sig > -50 ? 'Excellent' : sig > -60 ? 'Good' : sig > -70 ? 'Fair' : 'Weak';
                 const lock = n.security !== 'Open' ? '🔒 ' : '';
                 const safeSSID = escapeHtml(n.ssid).replace(/'/g, "\\'");
-                return `<div onclick="document.getElementById('wifi-ssid').value='${safeSSID}';document.getElementById('wifi-password').focus();" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#334155'">
+                return `<div onclick="document.getElementById('wifi-ssid').value='${safeSSID}';document.getElementById('wifi-password').focus();" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;margin-bottom:8px;cursor:pointer;" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#334155'">
                     <div>
                         <div style="font-size:14px;font-weight:600;color:#e2e8f0;">${lock}${escapeHtml(n.ssid)}</div>
                         <div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(n.security)}</div>
                     </div>
-                    <div style="font-family:monospace;font-size:14px;color:${barsColor};letter-spacing:1px;">${bars}</div>
+                    <div style="font-size:12px;font-weight:600;color:${sigColor};">● ${sigText}</div>
                 </div>`;
             }).join('');
         } catch(e) {
