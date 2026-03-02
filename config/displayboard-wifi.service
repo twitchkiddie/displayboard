@@ -4,9 +4,9 @@ After=network.target
 Before=pm2-pi.service
 
 [Service]
-Type=forking
+Type=simple
 ExecStart=/home/pi/dakboard-local/scripts/ap-fallback.sh
-RemainAfterExit=yes
+Restart=no
 StandardOutput=journal
 StandardError=journal
 

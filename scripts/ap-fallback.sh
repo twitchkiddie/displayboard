@@ -12,10 +12,12 @@ WAIT_SECS=45
 
 cleanup() {
     echo "Tearing down AP mode..."
-    sudo iptables -t nat -D PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 3000 2>/dev/null
-    sudo killall hostapd 2>/dev/null
-    sudo killall dnsmasq 2>/dev/null
+    iptables -t nat -D PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 3000 2>/dev/null || true
+    killall hostapd 2>/dev/null || true
+    killall dnsmasq 2>/dev/null || true
     rm -f "$FLAG_FILE" "$STATUS_FILE"
+    # Tell NetworkManager to reclaim wlan0
+    nmcli device set wlan0 managed yes 2>/dev/null || true
     echo "AP mode disabled."
 }
 
@@ -26,7 +28,6 @@ echo "Waiting up to ${WAIT_SECS}s for WiFi..."
 for i in $(seq 1 $WAIT_SECS); do
     if ip addr show wlan0 2>/dev/null | grep -q "inet "; then
         echo "WiFi connected after ${i}s"
-        # Stay running but do nothing — systemd RemainAfterExit keeps us alive
         trap - EXIT SIGTERM SIGINT
         exit 0
     fi
@@ -35,32 +36,47 @@ done
 
 echo "No WiFi after ${WAIT_SECS}s — enabling AP mode"
 
-# Kill wpa_supplicant
-sudo killall wpa_supplicant 2>/dev/null || true
+# Tell NetworkManager to stop managing wlan0 so hostapd can take it
+nmcli device set wlan0 managed no 2>/dev/null || true
+sleep 1
+
+# Kill anything holding wlan0
+killall wpa_supplicant 2>/dev/null || true
 sleep 1
 
 # Set static IP
-sudo ip addr flush dev wlan0
-sudo ip addr add ${AP_IP}/24 dev wlan0
-sudo ip link set wlan0 up
+ip addr flush dev wlan0
+ip addr add ${AP_IP}/24 dev wlan0
+ip link set wlan0 up
 
 # Start hostapd
-sudo hostapd -B "$AP_CONF"
+hostapd -B "$AP_CONF"
+sleep 1
 
 # Start dnsmasq
-sudo dnsmasq --conf-file="$DNS_CONF"
+dnsmasq --conf-file="$DNS_CONF"
 
-# Redirect HTTP to our server
-sudo iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 3000
+# Redirect port 80 → 3000 for captive portal (best-effort, needs iptables)
+if command -v iptables &>/dev/null; then
+    iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 3000 || true
+    echo "Port 80 redirect active"
+else
+    echo "iptables not found — port 80 redirect skipped (install iptables for captive portal)"
+fi
 
 # Create flag and status files
 touch "$FLAG_FILE"
-cat > "$STATUS_FILE" << EOF
-{"mode":"ap","ssid":"${AP_SSID}","ip":"${AP_IP}"}
-EOF
+printf '{"mode":"ap","ssid":"%s","ip":"%s"}\n' "$AP_SSID" "$AP_IP" > "$STATUS_FILE"
 
 echo "AP mode active: SSID=${AP_SSID} IP=${AP_IP}"
 
-# Keep running (forking service — backgrounded by hostapd -B)
-# The trap will clean up on SIGTERM
-wait
+# Keep running so systemd doesn't consider us exited
+# hostapd runs in background (-B), we just sleep
+while true; do
+    sleep 30
+    # Check hostapd still running; restart if died
+    if ! pgrep hostapd > /dev/null; then
+        echo "hostapd died — restarting"
+        hostapd -B "$AP_CONF" || true
+    fi
+done

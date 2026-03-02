@@ -8,7 +8,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 echo "📶 Installing WiFi AP fallback..."
 
 # Install packages
-sudo apt-get install -y hostapd dnsmasq
+sudo apt-get install -y hostapd dnsmasq iptables
 
 # Unmask hostapd (Raspbian masks it by default)
 sudo systemctl unmask hostapd
@@ -23,6 +23,8 @@ sudo systemctl stop dnsmasq 2>/dev/null || true
 sudo cp "$PROJECT_DIR/config/hostapd.conf" /etc/hostapd/displayboard-ap.conf
 sudo cp "$PROJECT_DIR/config/dnsmasq-ap.conf" /etc/dnsmasq-displayboard.conf
 sudo cp "$PROJECT_DIR/config/displayboard-wifi.service" /etc/systemd/system/displayboard-wifi.service
+# Patch service file to use actual install path (not hardcoded dakboard-local)
+sudo sed -i "s|/home/pi/dakboard-local|$PROJECT_DIR|g" /etc/systemd/system/displayboard-wifi.service
 
 # Reload systemd and enable our service
 sudo systemctl daemon-reload
