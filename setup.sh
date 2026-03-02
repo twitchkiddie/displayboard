@@ -92,8 +92,13 @@ echo ""
 
 # ── Step 8: Kiosk mode ───────────────────────────────────────────────────────
 echo "🖥️  Kiosk mode setup..."
-read -p "   Configure fullscreen kiosk display? (Y/n) " -n 1 -r
-echo
+if [ -t 0 ]; then
+  read -p "   Configure fullscreen kiosk display? (Y/n) " -n 1 -r
+  echo
+else
+  echo "   (non-interactive — kiosk mode enabled by default)"
+  REPLY="Y"
+fi
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
 
   # Detect chromium binary
@@ -158,8 +163,13 @@ echo ""
 
 # ── Step 9: iCloud photo sync cron (optional) ────────────────────────────────
 echo "📸 iCloud photo sync..."
-read -p "   Set up hourly iCloud photo sync? (y/N) " -n 1 -r
-echo
+if [ -t 0 ]; then
+  read -p "   Set up hourly iCloud photo sync? (y/N) " -n 1 -r
+  echo
+else
+  echo "   (non-interactive — skipping iCloud sync)"
+  REPLY="N"
+fi
 if [[ $REPLY =~ ^[Yy]$ ]]; then
   CRON_CMD="0 * * * * cd $SCRIPT_DIR && /usr/bin/node icloud-album-sync.js \"\$(node -e \"console.log(require('./config.json').photoAlbumToken||'')\" 2>/dev/null)\" photos >> /tmp/photo-sync.log 2>&1"
   if crontab -l 2>/dev/null | grep -q "icloud-album-sync"; then
@@ -203,8 +213,14 @@ echo ""
 echo "📖 https://github.com/twitchkiddie/displayboard"
 echo ""
 
-read -p "🔄 Reboot now to apply all changes? (Y/n) " -n 1 -r
-echo
+if [ -t 0 ]; then
+  read -p "🔄 Reboot now to apply all changes? (Y/n) " -n 1 -r
+  echo
+else
+  echo "🔄 Non-interactive — rebooting automatically in 5 seconds..."
+  REPLY="Y"
+  sleep 5
+fi
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
   echo "Rebooting in 3 seconds..."
   sleep 3
