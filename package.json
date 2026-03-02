@@ -1,6 +1,6 @@
 {
   "name": "displayboard",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Pi DisplayBoard - Self-contained dashboard for Raspberry Pi",
   "main": "pi-server.js",
   "scripts": {

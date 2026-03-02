@@ -458,28 +458,34 @@
 
         <!-- WiFi Tab -->
         <div id="wifi-tab" class="tab-content">
-            <div id="wifi-status-banner" class="card" style="display:none;"></div>
             <div class="card">
-                <h2>📶 WiFi Connection</h2>
-                <div id="wifi-current-info" style="margin-bottom: 16px; font-size: 14px; color: #94a3b8;">Loading...</div>
-                <div class="btn-group" style="margin-top: 0; margin-bottom: 20px;">
-                    <button class="btn btn-secondary" onclick="scanWifi()">🔍 Scan for Networks</button>
+                <h2>📶 WiFi</h2>
+                <div id="wifi-current-info" style="font-size:14px; color:#94a3b8; margin-bottom:20px;">Loading...</div>
+
+                <h3>Available Networks</h3>
+                <div id="wifi-network-list" style="display:none; margin-bottom:20px;">
+                    <!-- populated by scanWifi() -->
                 </div>
-                <div id="wifi-network-list" style="display:none; margin-bottom: 20px;"></div>
+                <div class="btn-group" style="margin-top:0; margin-bottom:24px;">
+                    <button class="btn btn-secondary" onclick="scanWifi()" id="wifi-scan-btn">🔍 Scan for Networks</button>
+                </div>
+
                 <h3>Connect to Network</h3>
                 <div class="form-group">
-                    <label>SSID (Network Name)</label>
-                    <input type="text" id="wifi-ssid" placeholder="Network name">
+                    <label>Network Name (SSID)</label>
+                    <input type="text" id="wifi-ssid" placeholder="e.g. MyHomeWiFi">
                 </div>
                 <div class="form-group">
                     <label>Password</label>
-                    <div style="position:relative;">
-                        <input type="password" id="wifi-password" placeholder="Leave empty for open networks" style="padding-right:40px;">
-                        <button onclick="toggleWifiPassword()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;" title="Show/hide password">👁️</button>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="password" id="wifi-password" placeholder="Leave empty for open networks" style="flex:1; width:auto; padding:10px 12px; background:#0f172a; border:1px solid #334155; border-radius:8px; color:#e2e8f0; font-size:14px;">
+                        <button class="btn btn-secondary btn-sm" onclick="toggleWifiPassword()" id="wifi-pw-toggle" style="flex-shrink:0; padding:10px 14px;">Show</button>
                     </div>
                 </div>
-                <button class="btn btn-primary" onclick="connectWifi()">📶 Connect</button>
-                <div id="wifi-connect-status" style="margin-top: 12px; font-size: 14px; display: none;"></div>
+                <div class="btn-group" style="margin-top:4px;">
+                    <button class="btn btn-primary" onclick="connectWifi()">Connect & Reboot</button>
+                </div>
+                <div id="wifi-connect-status" style="display:none; margin-top:14px; padding:12px; border-radius:8px; font-size:14px;"></div>
             </div>
         </div>
 
@@ -1285,30 +1291,43 @@
     async function scanWifi() {
         const list = document.getElementById('wifi-network-list');
         list.style.display = 'block';
-        list.innerHTML = '<div style="color:#94a3b8;padding:12px;">🔍 Scanning... (takes a few seconds)</div>';
+        list.innerHTML = '<div style="color:#94a3b8;font-size:14px;padding:8px 0;">🔍 Scanning... (takes a few seconds)</div>';
+        const btn = document.getElementById('wifi-scan-btn');
+        btn.disabled = true;
         try {
             const r = await fetch('/api/wifi/scan', { headers: getAuthHeaders() });
             const networks = await r.json();
+            btn.disabled = false;
             if (networks.length === 0) {
-                list.innerHTML = '<div style="color:#94a3b8;padding:12px;">No networks found. Try again.</div>';
+                list.innerHTML = '<div style="color:#94a3b8;font-size:14px;padding:8px 0;">No networks found. Try again.</div>';
                 return;
             }
             list.innerHTML = networks.map(n => {
-                const bars = n.signal != null ? (n.signal > -50 ? '▂▄▆█' : n.signal > -60 ? '▂▄▆' : n.signal > -70 ? '▂▄' : '▂') : '';
-                const lock = n.security !== 'Open' ? '🔒' : '';
-                return `<div class="cal-item" style="cursor:pointer;" onclick="document.getElementById('wifi-ssid').value='${escapeHtml(n.ssid).replace(/'/g, "\\'")}';document.getElementById('wifi-password').focus();">
-                    <div style="flex:1;"><div class="cal-name">${lock} ${escapeHtml(n.ssid)}</div><div class="cal-url">${escapeHtml(n.security)}${n.signal != null ? ' · ' + n.signal + ' dBm' : ''}</div></div>
-                    <div style="font-size:16px;letter-spacing:-2px;color:#6366f1;">${bars}</div>
+                const sig = n.signal != null ? n.signal : -90;
+                const bars = sig > -50 ? '▂▄▆█' : sig > -60 ? '▂▄▆_' : sig > -70 ? '▂▄__' : '▂___';
+                const barsColor = sig > -60 ? '#4ade80' : sig > -70 ? '#facc15' : '#f87171';
+                const lock = n.security !== 'Open' ? '🔒 ' : '';
+                const safeSSID = escapeHtml(n.ssid).replace(/'/g, "\\'");
+                return `<div onclick="document.getElementById('wifi-ssid').value='${safeSSID}';document.getElementById('wifi-password').focus();" style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:#0f172a;border:1px solid #334155;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#334155'">
+                    <div>
+                        <div style="font-size:14px;font-weight:600;color:#e2e8f0;">${lock}${escapeHtml(n.ssid)}</div>
+                        <div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeHtml(n.security)}</div>
+                    </div>
+                    <div style="font-family:monospace;font-size:14px;color:${barsColor};letter-spacing:1px;">${bars}</div>
                 </div>`;
             }).join('');
         } catch(e) {
-            list.innerHTML = '<div style="color:#f87171;padding:12px;">Scan failed: ' + escapeHtml(e.message) + '</div>';
+            btn.disabled = false;
+            list.innerHTML = '<div style="color:#f87171;font-size:14px;padding:8px 0;">Scan failed: ' + escapeHtml(e.message) + '</div>';
         }
     }
 
     function toggleWifiPassword() {
         const input = document.getElementById('wifi-password');
-        input.type = input.type === 'password' ? 'text' : 'password';
+        const btn = document.getElementById('wifi-pw-toggle');
+        const isHidden = input.type === 'password';
+        input.type = isHidden ? 'text' : 'password';
+        btn.textContent = isHidden ? 'Hide' : 'Show';
     }
 
     async function connectWifi() {
@@ -1327,9 +1346,13 @@
             });
             const d = await r.json();
             if (d.ok) {
+                status.style.background = '#14532d';
+                status.style.border = '1px solid #16a34a';
                 status.style.color = '#4ade80';
                 status.textContent = '✅ ' + d.message;
             } else {
+                status.style.background = '#450a0a';
+                status.style.border = '1px solid #dc2626';
                 status.style.color = '#f87171';
                 status.textContent = '❌ ' + (d.error || 'Failed');
             }
