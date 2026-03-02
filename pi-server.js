@@ -928,7 +928,7 @@ function handleSetHostname(req, res) {
       execSync(`echo '${hostname}' | sudo tee /etc/hostname`, { encoding: 'utf8' });
       // Update /etc/hosts
       execSync(`sudo sed -i 's/127\.0\.1\.1.*${oldHostname}/127.0.1.1\t${hostname}/g' /etc/hosts`, { encoding: 'utf8' });
-      console.log(\`🖥️  Hostname changed: \${oldHostname} → \${hostname}\`);
+      console.log("🖥️  Hostname changed: " + oldHostname + " → " + hostname);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, hostname }));
     } catch(err) {
