@@ -117,7 +117,39 @@
         </div>
     </div>
 
+    <!-- Admin URL hint — shown in bottom-left corner, fades after 60s -->
+    <div id="admin-hint" style="
+      position: fixed;
+      bottom: 18px;
+      left: 18px;
+      background: rgba(0,0,0,0.55);
+      color: rgba(255,255,255,0.75);
+      font-family: monospace;
+      font-size: 13px;
+      padding: 7px 12px;
+      border-radius: 8px;
+      pointer-events: none;
+      z-index: 9999;
+      transition: opacity 2s;
+    ">⚙️ Admin: http://<span id="admin-hint-ip">...</span>:3000/admin.html &nbsp;·&nbsp; PIN: 123456</div>
+
     <script src="dashboard.js"></script>
     <script src="display-enhancements.js"></script>
+    <script>
+      // Populate admin hint IP and fade out after 60s
+      (function() {
+        fetch('/api/system-info').then(r => r.json()).then(d => {
+          var ip = (d && d.ip) ? d.ip : window.location.hostname;
+          document.getElementById('admin-hint-ip').textContent = ip;
+        }).catch(function() {
+          document.getElementById('admin-hint-ip').textContent = window.location.hostname;
+        });
+        setTimeout(function() {
+          var el = document.getElementById('admin-hint');
+          if (el) el.style.opacity = '0';
+          setTimeout(function() { if (el) el.style.display = 'none'; }, 2000);
+        }, 60000);
+      })();
+    </script>
 </body>
 </html>
