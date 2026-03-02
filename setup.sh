@@ -139,6 +139,8 @@ $CHROMIUM_BIN \
   --disable-session-crashed-bubble \
   --disable-translate \
   --check-for-update-interval=31536000 \
+  --password-store=basic \
+  --use-mock-keychain \
   http://localhost:3000 &
 
 # Disable screen blanking
