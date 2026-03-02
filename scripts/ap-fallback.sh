@@ -26,15 +26,22 @@ trap cleanup EXIT SIGTERM SIGINT
 # Wait for WiFi connection
 echo "Waiting up to ${WAIT_SECS}s for WiFi..."
 for i in $(seq 1 $WAIT_SECS); do
+    # If WiFi comes up, we're done
     if ip addr show wlan0 2>/dev/null | grep -q "inet "; then
         echo "WiFi connected after ${i}s"
+        trap - EXIT SIGTERM SIGINT
+        exit 0
+    fi
+    # If ethernet is up, no need for AP mode — user can configure via wired admin panel
+    if ip addr show eth0 2>/dev/null | grep -q "inet "; then
+        echo "Ethernet connected — skipping AP mode (configure WiFi via admin panel)"
         trap - EXIT SIGTERM SIGINT
         exit 0
     fi
     sleep 1
 done
 
-echo "No WiFi after ${WAIT_SECS}s — enabling AP mode"
+echo "No WiFi or ethernet after ${WAIT_SECS}s — enabling AP mode"
 
 # Tell NetworkManager to stop managing wlan0 so hostapd can take it
 nmcli device set wlan0 managed no 2>/dev/null || true
