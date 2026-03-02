@@ -1108,17 +1108,23 @@ function handleWifiStatus(req, res) {
 function handleWifiScan(req, res) {
   if (!requireAuth(req, res)) return;
   try {
+    // In AP mode return pre-cached scan (done before hostapd started)
+    const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
+    if (inApMode) {
+      try {
+        const cached = JSON.parse(fs.readFileSync('/tmp/displayboard-wifi-networks.json', 'utf8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(cached));
+      } catch(e) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify([]));
+      }
+    }
+
     // Try nmcli first (NetworkManager systems — Raspberry Pi OS Bookworm/Trixie)
     let networks = [];
     let usedNmcli = false;
     try {
-      // In AP mode hostapd owns wlan0 — temporarily stop it so NM can scan
-      const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
-      if (inApMode) {
-        execSync('sudo killall hostapd 2>/dev/null || true', { timeout: 3000 });
-        execSync('sudo nmcli device set wlan0 managed yes 2>/dev/null || true', { timeout: 3000 });
-        execSync('sleep 2', { timeout: 5000 });
-      }
       // Trigger a fresh scan then list results
       execSync('nmcli device wifi rescan ifname wlan0 2>/dev/null || true', { timeout: 8000 });
       const raw = execSync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0 2>/dev/null', { encoding: 'utf8', timeout: 10000 });
@@ -1183,18 +1189,25 @@ function handleWifiConnect(req, res) {
       const hasNmcli = (() => { try { execSync('which nmcli', { timeout: 2000 }); return true; } catch(e) { return false; } })();
 
       if (hasNmcli) {
-        // In AP mode wlan0 is owned by hostapd — can't connect now, just save credentials
-        // Use `nmcli connection add` to create a profile; it will connect automatically on reboot
         const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
-        // Remove any existing saved connection for this SSID first
-        execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });
-        if (password && password.length > 0) {
-          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" connection.autoconnect yes`, { timeout: 10000 });
+        if (inApMode) {
+          // In AP mode: write NM connection file directly — nmcli hangs when wlan0 is owned by hostapd
+          const safeName = ssid.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const connFile = `/etc/NetworkManager/system-connections/displayboard-${safeName}.nmconnection`;
+          const wifiSecurity = password ? `\n[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${password}` : '';
+          const nmConn = `[connection]\nid=${ssid}\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=${ssid}${wifiSecurity}\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n`;
+          const tmpFile = '/tmp/displayboard-nm.conf';
+          fs.writeFileSync(tmpFile, nmConn, { mode: 0o600 });
+          execSync(`sudo cp ${tmpFile} ${connFile} && sudo chmod 600 ${connFile}`, { timeout: 5000 });
+          fs.unlinkSync(tmpFile);
         } else {
-          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" connection.autoconnect yes`, { timeout: 10000 });
-        }
-        if (!inApMode) {
-          // Not in AP mode — try to connect immediately too
+          // Normal mode — use nmcli
+          execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });
+          if (password && password.length > 0) {
+            execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" connection.autoconnect yes`, { timeout: 10000 });
+          } else {
+            execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" connection.autoconnect yes`, { timeout: 10000 });
+          }
           execSync(`sudo nmcli connection up "${ssid}" 2>/dev/null || true`, { timeout: 15000 });
         }
       } else {

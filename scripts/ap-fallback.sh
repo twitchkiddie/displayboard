@@ -43,6 +43,31 @@ done
 
 echo "No WiFi or ethernet after ${WAIT_SECS}s — enabling AP mode"
 
+# Scan for networks NOW before hostapd takes wlan0
+echo "Scanning for networks before starting AP..."
+nmcli device wifi rescan ifname wlan0 2>/dev/null || true
+sleep 3
+nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0 2>/dev/null | \
+  awk -F: 'NF>=2 && $1!="" {printf "{\"ssid\":\"%s\",\"signal\":%s,\"security\":\"%s\"}\n",$1,$2,$3}' | \
+  python3 -c "
+import sys, json
+lines = [l.strip() for l in sys.stdin if l.strip()]
+seen = set()
+nets = []
+for l in lines:
+    try:
+        o = json.loads(l)
+        if o['ssid'] and o['ssid'] not in seen:
+            seen.add(o['ssid'])
+            sig = int(o['signal']) if o['signal'] else 0
+            dbm = round((sig/2)-100) if sig else -90
+            nets.append({'ssid':o['ssid'],'signal':dbm,'security':o['security'] or 'Open'})
+    except: pass
+nets.sort(key=lambda x: x['signal'], reverse=True)
+print(json.dumps(nets))
+" > /tmp/displayboard-wifi-networks.json 2>/dev/null || echo "[]" > /tmp/displayboard-wifi-networks.json
+echo "Cached $(python3 -c "import json;d=json.load(open('/tmp/displayboard-wifi-networks.json'));print(len(d))" 2>/dev/null || echo 0) networks"
+
 # Tell NetworkManager to stop managing wlan0 so hostapd can take it
 nmcli device set wlan0 managed no 2>/dev/null || true
 sleep 1
