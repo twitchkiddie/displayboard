@@ -127,9 +127,11 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     AUTOSTART_DIR="$HOME/.config/labwc"
     mkdir -p "$AUTOSTART_DIR"
     
-    cat > "$AUTOSTART_DIR/autostart" << 'EOF'
+    # Detect correct chromium binary
+    CHROMIUM_BIN=\$(which chromium 2>/dev/null || which chromium-browser 2>/dev/null || echo chromium)
+    cat > "$AUTOSTART_DIR/autostart" << EOF
 # DisplayBoard Kiosk Mode
-chromium-browser \
+$CHROMIUM_BIN \
   --kiosk \
   --noerrdialogs \
   --disable-infobars \
