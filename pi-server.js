@@ -1112,9 +1112,16 @@ function handleWifiScan(req, res) {
     let networks = [];
     let usedNmcli = false;
     try {
+      // In AP mode hostapd owns wlan0 — temporarily stop it so NM can scan
+      const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
+      if (inApMode) {
+        execSync('sudo killall hostapd 2>/dev/null || true', { timeout: 3000 });
+        execSync('sudo nmcli device set wlan0 managed yes 2>/dev/null || true', { timeout: 3000 });
+        execSync('sleep 2', { timeout: 5000 });
+      }
       // Trigger a fresh scan then list results
-      execSync('nmcli device wifi rescan 2>/dev/null || true', { timeout: 5000 });
-      const raw = execSync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list 2>/dev/null', { encoding: 'utf8', timeout: 10000 });
+      execSync('nmcli device wifi rescan ifname wlan0 2>/dev/null || true', { timeout: 8000 });
+      const raw = execSync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0 2>/dev/null', { encoding: 'utf8', timeout: 10000 });
       const seen = new Set();
       for (const line of raw.split('\n')) {
         const parts = line.split(':');
@@ -1176,16 +1183,20 @@ function handleWifiConnect(req, res) {
       const hasNmcli = (() => { try { execSync('which nmcli', { timeout: 2000 }); return true; } catch(e) { return false; } })();
 
       if (hasNmcli) {
-        // Remove any existing connection for this SSID
-        execSync(`nmcli connection delete "${ssid}" 2>/dev/null || true`, { timeout: 5000 });
-        // Add new connection
+        // In AP mode wlan0 is owned by hostapd — can't connect now, just save credentials
+        // Use `nmcli connection add` to create a profile; it will connect automatically on reboot
+        const inApMode = fs.existsSync('/tmp/displayboard-ap-mode');
+        // Remove any existing saved connection for this SSID first
+        execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });
         if (password && password.length > 0) {
-          execSync(`nmcli device wifi connect "${ssid}" password "${password}" ifname wlan0`, { timeout: 15000 });
+          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" connection.autoconnect yes`, { timeout: 10000 });
         } else {
-          execSync(`nmcli device wifi connect "${ssid}" ifname wlan0`, { timeout: 15000 });
+          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" connection.autoconnect yes`, { timeout: 10000 });
         }
-        // Set autoconnect
-        execSync(`nmcli connection modify "${ssid}" connection.autoconnect yes`, { timeout: 5000 });
+        if (!inApMode) {
+          // Not in AP mode — try to connect immediately too
+          execSync(`sudo nmcli connection up "${ssid}" 2>/dev/null || true`, { timeout: 15000 });
+        }
       } else {
         // Fallback: wpa_supplicant.conf
         let networkBlock;
