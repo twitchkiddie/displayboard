@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DisplayBoard — Setup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .container { max-width: 560px; width: 100%; text-align: center; }
+  .logo { font-size: 64px; margin-bottom: 16px; }
+  h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+  .subtitle { color: #64748b; font-size: 16px; margin-bottom: 40px; }
+  .card {
+    background: #1e293b;
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 20px;
+    text-align: left;
+  }
+  .card h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #f1f5f9; }
+  .step {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #334155;
+  }
+  .step:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+  .step-num {
+    background: #6366f1;
+    color: white;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content { flex: 1; }
+  .step-title { font-weight: 600; margin-bottom: 4px; color: #f1f5f9; }
+  .step-desc { font-size: 14px; color: #94a3b8; line-height: 1.5; }
+  .url-box {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: monospace;
+    font-size: 15px;
+    color: #60a5fa;
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  .btn {
+    display: inline-block;
+    background: #6366f1;
+    color: white;
+    padding: 14px 32px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 16px;
+    margin-top: 8px;
+    transition: background 0.2s;
+  }
+  .btn:hover { background: #4f46e5; }
+  .pin-hint { color: #475569; font-size: 13px; margin-top: 8px; }
+  .pin-hint strong { color: #64748b; }
+  #local-ip { color: #60a5fa; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">📋</div>
+  <h1>Welcome to DisplayBoard</h1>
+  <p class="subtitle">Your display is running — just needs a few minutes to set up.</p>
+
+  <div class="card">
+    <h2>🚀 Quick Setup</h2>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <div class="step-title">Open the Admin Panel</div>
+        <div class="step-desc">From any device on your network, navigate to:</div>
+        <div class="url-box" id="admin-url">http://<span id="local-ip">...</span>:3000/admin.html</div>
+        <div class="pin-hint">Default PIN: <strong>123456</strong></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <div class="step-title">Set Your Location</div>
+        <div class="step-desc">Go to <strong>Display Settings</strong> → set your city, latitude, and longitude for accurate weather.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <div class="step-title">Add Your Calendars</div>
+        <div class="step-desc">Go to <strong>Calendars</strong> → paste iCal URLs from Google Calendar, iCloud, Outlook, or any .ics feed.</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <div class="step-title">Add Photos (Optional)</div>
+        <div class="step-desc">Upload photos directly in the admin panel, or paste an iCloud shared album token for automatic sync.</div>
+      </div>
+    </div>
+  </div>
+
+  <a href="/admin.html" class="btn">⚙️ Open Admin Panel</a>
+  <br>
+  <a href="/" class="btn" style="background:#1e293b; margin-top: 12px; font-size: 14px;">Skip — Go to Dashboard</a>
+</div>
+
+<script>
+  // Get local IP from server
+  fetch('/api/system-info')
+    .then(r => r.json())
+    .then(d => {
+      const ip = d.ip || window.location.hostname;
+      document.getElementById('local-ip').textContent = ip;
+    })
+    .catch(() => {
+      document.getElementById('local-ip').textContent = window.location.hostname;
+    });
+</script>
+</body>
+</html>

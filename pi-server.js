@@ -39,6 +39,12 @@ if (!config.updates) {
   fs.writeFileSync(path.join(__dirname, 'config.json'), JSON.stringify(config, null, 2));
 }
 
+// First-run detection — config is unconfigured if location is still default
+function isFirstRun() {
+  const loc = config.location || {};
+  return !loc.name || loc.name === 'Your City, State' || loc.name === 'Your City, ST';
+}
+
 // Generate admin PIN if not set
 if (!config.adminPin) {
   config.adminPin = '123456';
@@ -1066,6 +1072,16 @@ function handleAuth(req, res) {
 // Router
 const server = http.createServer((req, res) => {
   const pathname = url.parse(req.url, true).pathname;
+  // First-run: redirect to setup page
+  if ((pathname === '/' || pathname === '/index.html') && isFirstRun()) {
+    const setupPath = path.join(__dirname, 'setup-welcome.html');
+    fs.readFile(setupPath, (err, data) => {
+      if (err) { res.writeHead(302, { Location: '/admin.html' }); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
+    return;
+  }
   if (pathname === '/api/auth' && req.method === 'POST') return handleAuth(req, res);
   if (pathname === '/api/display-info' && req.method === 'GET') return handleDisplayInfo(req, res);
   if (pathname === '/api/display-settings' && req.method === 'POST') return handleDisplaySettings(req, res);
