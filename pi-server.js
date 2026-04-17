@@ -494,24 +494,35 @@ function handleLogs(req, res) {
   res.end(JSON.stringify({ logs }));
 }
 
+// Pick the first real (non-headless) output from wlr-randr --json.
+// labwc exposes a NOOP-* headless dummy that is always "enabled: true"
+// when the physical monitor is asleep — skip it so we report real state.
+const WLR_ENV = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
+function getRealOutput() {
+  const raw = execSync(`${WLR_ENV} wlr-randr --json 2>/dev/null`, { encoding: 'utf8' });
+  const data = JSON.parse(raw);
+  return data.find(o => !/^NOOP/i.test(o.name)) || data[0] || null;
+}
+
 function handleDisplayPower(req, res) {
   let body = '';
   req.on('data', chunk => body += chunk);
   req.on('end', () => {
     try {
       const { power } = JSON.parse(body); // "on", "off", "status"
-      const wlrEnv = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
       if (power === 'status') {
         // Status check doesn't require auth
-        const out = execSync(`${wlrEnv} wlr-randr 2>/dev/null`, { encoding: 'utf8' });
-        const isOn = out.includes('Enabled: yes');
+        const output = getRealOutput();
+        const isOn = !!(output && output.enabled);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ power: isOn ? 'on' : 'off' }));
       } else {
         // Power control requires auth
         if (!requireAuth(req, res)) return;
+        const output = getRealOutput();
+        const name = output ? output.name : 'HDMI-A-1';
         const flag = power === 'on' ? '--on' : '--off';
-        execSync(`${wlrEnv} wlr-randr --output HDMI-A-1 ${flag} 2>/dev/null`, { encoding: 'utf8' });
+        execSync(`${WLR_ENV} wlr-randr --output ${name} ${flag} 2>/dev/null`, { encoding: 'utf8' });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, power }));
       }
@@ -952,10 +963,11 @@ function handleVersion(req, res) {
 // Display info — reads current state from wlr-randr --json
 function handleDisplayInfo(req, res) {
   try {
-    const wlrEnv = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
-    const raw = execSync(`${wlrEnv} wlr-randr --json 2>/dev/null`, { encoding: 'utf8' });
-    const data = JSON.parse(raw);
-    const output = data[0];
+    const output = getRealOutput();
+    if (!output) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'no display output found' }));
+    }
 
     // Deduplicate resolutions — keep highest refresh rate per resolution
     const resMap = {};
@@ -995,15 +1007,14 @@ function handleDisplaySettings(req, res) {
   req.on('end', () => {
     try {
       const { resolution, orientation, scale } = JSON.parse(body);
-      const wlrEnv = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
 
-      // Get output name dynamically
-      const infoRaw = execSync(`${wlrEnv} wlr-randr --json 2>/dev/null`, { encoding: 'utf8' });
-      const infoData = JSON.parse(infoRaw);
-      const outputName = infoData[0].name;
+      // Get output name dynamically (skip NOOP headless dummy)
+      const output = getRealOutput();
+      if (!output) throw new Error('no display output found');
+      const outputName = output.name;
 
       // Build single combined command
-      let cmd = `${wlrEnv} wlr-randr --output ${outputName}`;
+      let cmd = `${WLR_ENV} wlr-randr --output ${outputName}`;
       if (resolution) cmd += ` --mode ${resolution}`;
       if (orientation !== undefined && orientation !== null) cmd += ` --transform ${orientation}`;
       if (scale !== undefined && scale !== null) cmd += ` --scale ${scale}`;
@@ -1033,11 +1044,10 @@ function applyDisplaySettings() {
   try {
     const { resolution, orientation, scale } = config.display || {};
     if (!resolution && orientation === undefined && scale === undefined) return;
-    const wlrEnv = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
-    const infoRaw = execSync(`${wlrEnv} wlr-randr --json 2>/dev/null`, { encoding: 'utf8' });
-    const infoData = JSON.parse(infoRaw);
-    const outputName = infoData[0].name;
-    let cmd = `${wlrEnv} wlr-randr --output ${outputName}`;
+    const output = getRealOutput();
+    if (!output) return;
+    const outputName = output.name;
+    let cmd = `${WLR_ENV} wlr-randr --output ${outputName}`;
     if (resolution) cmd += ` --mode ${resolution}`;
     if (orientation !== undefined && orientation !== null) cmd += ` --transform ${orientation}`;
     if (scale !== undefined && scale !== null) cmd += ` --scale ${scale}`;
