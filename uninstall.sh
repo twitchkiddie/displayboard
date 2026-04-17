@@ -15,15 +15,27 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 echo ""
 
-# Stop and remove PM2 process
+# Stop and remove PM2 process (handle both current and legacy names).
 echo "🛑 Stopping PM2 process..."
-pm2 stop displayboard 2>/dev/null && echo "   ✓ Stopped" || echo "   (not running)"
-pm2 delete displayboard 2>/dev/null && echo "   ✓ Removed from PM2" || true
+for NAME in pi-dashboard displayboard; do
+  pm2 stop "$NAME" 2>/dev/null && echo "   ✓ Stopped $NAME" || true
+  pm2 delete "$NAME" 2>/dev/null && echo "   ✓ Removed $NAME from PM2" || true
+done
 pm2 save 2>/dev/null || true
 
 # Remove PM2 startup
 echo "🔧 Removing PM2 startup..."
 pm2 unstartup systemd 2>/dev/null | grep "sudo" | bash 2>/dev/null || true
+echo "   ✓ Done"
+
+# Disable and remove the WiFi AP fallback service (installed by scripts/wifi-setup.sh).
+echo "📶 Removing WiFi AP fallback service..."
+sudo systemctl disable displayboard-wifi.service 2>/dev/null || true
+sudo systemctl stop displayboard-wifi.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/displayboard-wifi.service
+sudo rm -f /etc/sudoers.d/displayboard-wifi
+sudo rm -f /etc/hostapd/displayboard-ap.conf /etc/dnsmasq-displayboard.conf
+sudo systemctl daemon-reload 2>/dev/null || true
 echo "   ✓ Done"
 
 # Remove kiosk autostart

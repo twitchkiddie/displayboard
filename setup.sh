@@ -76,8 +76,10 @@ echo ""
 
 # ── Step 6: PM2 process ──────────────────────────────────────────────────────
 echo "🚀 Starting DisplayBoard with PM2..."
+# Clean up legacy process names from older installs, then start fresh.
 pm2 delete displayboard 2>/dev/null || true
-pm2 start server.js --name displayboard --time
+pm2 delete pi-dashboard 2>/dev/null || true
+pm2 start pi-server.js --name pi-dashboard --time
 pm2 save
 echo "   ✓ PM2 process running"
 echo ""
@@ -208,10 +210,10 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  🔧 Useful commands:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  pm2 status                  Check if running"
-echo "  pm2 logs displayboard       View live logs"
-echo "  pm2 restart displayboard    Restart server"
-echo "  pm2 stop displayboard       Stop server"
+echo "  pm2 status                    Check if running"
+echo "  pm2 logs pi-dashboard         View live logs"
+echo "  pm2 restart pi-dashboard      Restart server"
+echo "  pm2 stop pi-dashboard         Stop server"
 echo "  sudo reboot                 Reboot Pi"
 echo "  sudo shutdown -h now        Shutdown"
 echo ""
