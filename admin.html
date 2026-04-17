@@ -113,7 +113,7 @@
         <div style="background: #1e293b; border-radius: 16px; padding: 40px; max-width: 400px; width: 90%; text-align: center;">
             <h2 style="margin: 0 0 12px; font-size: 24px;">🔐 Admin Access</h2>
             <p style="color: #94a3b8; margin: 0 0 24px;">Enter your admin PIN</p><p style="color: #475569; font-size: 13px; margin: -16px 0 24px;">Default PIN: <strong style="color:#64748b">123456</strong></p>
-            <input type="password" id="pin-input" placeholder="••••••" style="width: 100%; padding: 16px; font-size: 20px; text-align: center; letter-spacing: 8px; background: #0f172a; border: 2px solid #334155; border-radius: 8px; color: #e2e8f0; margin-bottom: 16px;" maxlength="6">
+            <input type="password" id="pin-input" placeholder="••••••" style="width: 100%; padding: 16px; font-size: 20px; text-align: center; letter-spacing: 8px; background: #0f172a; border: 2px solid #334155; border-radius: 8px; color: #e2e8f0; margin-bottom: 16px;" maxlength="8">
             <div id="pin-error" style="color: #f87171; margin-bottom: 16px; min-height: 20px; font-size: 14px;"></div>
             <button onclick="validatePin()" class="btn btn-primary" style="width: 100%; padding: 14px; font-size: 16px;">Unlock</button>
         </div>
@@ -322,7 +322,7 @@
                 <div id="upload-area" style="border: 2px dashed #334155; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer;" onclick="document.getElementById('file-input').click()">
                     <div style="font-size: 32px; margin-bottom: 8px;">📁</div>
                     <div>Click or drag photos here to upload</div>
-                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">JPG, PNG, WebP supported</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">JPG or PNG · up to 10 MB each</div>
                     <input type="file" id="file-input" multiple accept="image/*" style="display:none" onchange="uploadFiles(this.files)">
                 </div>
                 <div id="upload-progress" style="margin-top: 12px; font-size: 13px; color: #94a3b8;"></div>
@@ -616,9 +616,10 @@
     async function validatePin() {
         const pin = document.getElementById('pin-input').value.trim();
         const errorEl = document.getElementById('pin-error');
-        
-        if (!pin || pin.length < 6) {
-            errorEl.textContent = 'Please enter a 6-digit PIN';
+
+        // Server accepts 4–8 digits. Keep UI aligned.
+        if (!/^\d{4,8}$/.test(pin)) {
+            errorEl.textContent = 'Please enter a 4–8 digit PIN';
             return;
         }
         
@@ -689,10 +690,13 @@
         await loadPreview();
         await checkDisplayPower();
         await loadSystemInfo();
+        await loadHostname();
         await checkForUpdates();
         await checkBackupExists();
         loadDisplayInfo(); // pre-fetch display info (non-blocking)
         setInterval(loadStatus, 60000);
+        // Keep the display power indicator honest if night-mode fires while open.
+        setInterval(checkDisplayPower, 60000);
 
         // If running in AP mode, auto-switch to WiFi tab and show banner
         try {
@@ -997,7 +1001,8 @@
             const d = await r.json();
             if (d.ok) {
                 adminPin = newPin;
-                sessionStorage.setItem('displayboard-pin', newPin);
+                // Keep in sync with validatePin() — must use the same key.
+                sessionStorage.setItem('adminPin', newPin);
                 document.getElementById('new-pin').value = '';
                 showAlert('success', '🔐 PIN changed!');
             } else { showAlert('error', d.error || 'Failed'); }

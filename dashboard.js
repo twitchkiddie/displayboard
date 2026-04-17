@@ -269,24 +269,14 @@ function getCalendarColor(calendarName) {
     return null;
 }
 
-// Load photos list
+// Load photos list. The server already shuffles, so we just kick off the slideshow.
 async function loadPhotos() {
     try {
         const response = await fetch('/api/photos');
         const data = await response.json();
-        photos = data.photos;
-        
-        // Shuffle photos randomly
-        for (let i = photos.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [photos[i], photos[j]] = [photos[j], photos[i]];
-        }
+        photos = data.photos || [];
         currentPhotoIndex = 0;
-        
-        if (photos.length > 0) {
-            showNextPhoto();
-        }
-        
+        if (photos.length > 0) showNextPhoto();
         if (window.markDataRefresh) window.markDataRefresh();
     } catch (error) {
         console.error('Photos fetch failed:', error);
