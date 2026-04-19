@@ -5,7 +5,7 @@ Before=pm2-pi.service
 
 [Service]
 Type=simple
-ExecStart=/home/pi/dakboard-local/scripts/ap-fallback.sh
+ExecStart=/home/pi/displayboard/scripts/ap-fallback.sh
 Restart=no
 StandardOutput=journal
 StandardError=journal

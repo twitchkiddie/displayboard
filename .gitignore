@@ -1,7 +1,10 @@
 node_modules/
 photos/
 .calendar-cache.json
+.weather-cache.json
 config.json
+wifi-pending.json
+.backup/
 package-lock.json
 *.log
 .DS_Store
