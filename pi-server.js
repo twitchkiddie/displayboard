@@ -1066,9 +1066,13 @@ async function handleWifiConnect(req, res) {
         fs.writeFileSync(WIFI_PENDING_FILE, JSON.stringify({ ssid, password: password || '' }), { mode: 0o600 });
       } else {
         // Normal mode — nmcli handles everything.
+        // psk-flags=0 stores the PSK system-wide in the connection file so
+        // NetworkManager re-authenticates silently on reconnect without asking
+        // a session agent (which would otherwise pop a polkit password dialog
+        // on top of the kiosk). See https://networkmanager.dev/docs/api/latest/settings-802-11-wireless-security.html
         execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });
         if (password) {
-          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" connection.autoconnect yes`, { timeout: 10000 });
+          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" wifi-sec.psk-flags 0 connection.autoconnect yes`, { timeout: 10000 });
         } else {
           execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" connection.autoconnect yes`, { timeout: 10000 });
         }

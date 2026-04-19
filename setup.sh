@@ -128,11 +128,31 @@ if [[ ! $REPLY =~ ^[Nn]$ ]]; then
   if command -v labwc &>/dev/null || [ -f /usr/bin/labwc ]; then
     # Wayland / labwc
     echo "   Detected: labwc (Wayland)"
-    mkdir -p "$HOME/.config/labwc"
+    mkdir -p "$HOME/.config/labwc" "$HOME/.config/autostart"
+
+    # Suppress polkit agents (lxpolkit etc). A kiosk has no user to answer
+    # dialogs; NetworkManager re-auths silently as long as the connection's
+    # psk-flags=0 (set in admin-panel WiFi setup + ap-fallback.sh).
+    for agent in lxpolkit polkit-gnome-authentication-agent-1 polkit-mate-authentication-agent-1 polkit-kde-authentication-agent-1; do
+      cat > "$HOME/.config/autostart/${agent}.desktop" << AGENTEOF
+[Desktop Entry]
+Type=Application
+Name=${agent} (disabled for kiosk)
+Exec=true
+Hidden=true
+X-GNOME-Autostart-enabled=false
+AGENTEOF
+    done
+
     cat > "$HOME/.config/labwc/autostart" << AUTOEOF
-# DisplayBoard Kiosk — wait for server before launching Chromium
+# DisplayBoard Kiosk — wait for server before launching Chromium.
+# Runs in the background so labwc can finish starting.
 (
-  for i in $(seq 1 30); do
+  # Kill any polkit agent that slipped through the .desktop overrides
+  # so password prompts never overlay the dashboard.
+  pkill -f 'polkit-.*-authentication-agent|lxpolkit' 2>/dev/null || true
+
+  for i in \$(seq 1 30); do
     curl -sf http://localhost:3000 > /dev/null 2>&1 && break
     sleep 1
   done
@@ -142,7 +162,7 @@ xset s off 2>/dev/null || true
 xset -dpms 2>/dev/null || true
 xset s noblank 2>/dev/null || true
 AUTOEOF
-    echo "   ✓ labwc autostart configured"
+    echo "   ✓ labwc autostart configured (polkit agents suppressed)"
 
   else
     # X11 / LXDE

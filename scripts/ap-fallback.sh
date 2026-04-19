@@ -26,8 +26,12 @@ cleanup() {
         if [ -n "$SSID" ]; then
             SAFE=$(echo "$SSID" | tr -cd 'a-zA-Z0-9_-')
             CONN_FILE="/etc/NetworkManager/system-connections/displayboard-${SAFE}.nmconnection"
+            # psk-flags=0 stores the PSK system-wide so NetworkManager
+            # re-authenticates silently on reconnect, rather than asking a
+            # session polkit agent (which would pop a password dialog over the
+            # kiosk display).
             if [ -n "$PASS" ]; then
-                SECURITY="[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${PASS}\n\n"
+                SECURITY="[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${PASS}\npsk-flags=0\n\n"
             else
                 SECURITY=""
             fi
