@@ -215,6 +215,37 @@ echo "🌐 Setting up WiFi AP fallback..."
 bash "$(dirname "$0")/scripts/wifi-setup.sh"
 echo ""
 
+# ── Step 11: Harden existing WiFi connections ────────────────────────────────
+# Connections created by Pi Imager, raspi-config, or netplan can be marked
+# "agent-owned" (psk-flags=1). When NetworkManager re-authenticates on a
+# reconnect it then asks a session polkit agent for the PSK — which pops a
+# password dialog over the kiosk. Force psk-flags=0 on any connection that
+# already has a stored PSK so NM re-auths silently forever.
+echo "📶 Hardening existing WiFi connections..."
+NM_DIR=/etc/NetworkManager/system-connections
+if [ -d "$NM_DIR" ]; then
+  FIXED=0
+  for f in "$NM_DIR"/*.nmconnection; do
+    [ -f "$f" ] || continue
+    # Only touch connections with a real PSK stored in the file.
+    # WPA PSK minimum length is 8 characters.
+    if sudo grep -qE '^psk=.{8,}' "$f"; then
+      sudo sed -i '/^psk-flags=/d' "$f"
+      sudo sed -i '/^\[wifi-security\]/a psk-flags=0' "$f"
+      FIXED=$((FIXED + 1))
+    fi
+  done
+  if [ "$FIXED" -gt 0 ]; then
+    sudo systemctl reload NetworkManager 2>/dev/null || true
+    echo "   ✓ Hardened $FIXED WiFi connection(s)"
+  else
+    echo "   ✓ No WiFi connections needed hardening"
+  fi
+else
+  echo "   (NetworkManager not in use — skipping)"
+fi
+echo ""
+
 # ── Done ─────────────────────────────────────────────────────────────────────
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 
