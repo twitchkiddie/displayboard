@@ -34,49 +34,49 @@ function updateClock() {
     document.getElementById('date').textContent = dateStr;
 }
 
-// Update weather (current + forecast)
+// Update weather (current + forecast). Returns true on success, false on failure.
 async function updateWeather() {
     try {
         const response = await fetch('/api/weather-extended');
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
-        
+
         if (data.error || !data.current || !data.forecast) {
             throw new Error(data.error || 'Invalid weather data structure');
         }
-        
+
         // Current weather
         currentTemp = data.current.temp || '--';
         document.getElementById('current-temp').textContent = `${currentTemp}°`;
         document.getElementById('feels-like').textContent = `Feels like ${data.current.feelsLike || '--'}°`;
-        
+
         // Wind & humidity line
         const windHumidity = [];
         if (data.current.wind) windHumidity.push('💨 ' + data.current.wind);
         if (data.current.humidity) windHumidity.push('💧 ' + data.current.humidity);
         const windHumidityEl = document.getElementById('wind-humidity');
         if (windHumidityEl) windHumidityEl.textContent = windHumidity.join('  ');
-        
+
         // Sun/Moon
         document.getElementById('sunrise').textContent = data.current.sunrise || '--';
         document.getElementById('sunset').textContent = data.current.sunset || '--';
         document.getElementById('moon-phase').innerHTML = data.current.moonPhase || '--';
-        
+
         const moonIconEl = document.querySelector('#sun-moon .moon-icon');
         if (moonIconEl && data.current.moonIcon) {
             moonIconEl.className = 'wi ' + data.current.moonIcon + ' moon-icon';
         }
-        
+
         // 5-day forecast
         if (data.forecast && data.forecast.length >= 5) {
             for (let i = 0; i < 5; i++) {
                 const day = data.forecast[i];
                 const forecastEl = document.querySelector(`.forecast-day[data-day="${i}"]`);
-                
+
                 forecastEl.querySelector('.forecast-label').textContent = day.label;
                 const wiClass = svgToWeatherIcon(day.icon);
                 forecastEl.querySelector('.forecast-icon').innerHTML = `<i class="wi ${wiClass}"></i>`;
@@ -85,34 +85,44 @@ async function updateWeather() {
                 forecastEl.querySelector('.low').textContent = `${day.low}°`;
             }
         }
-        
+
         updateClock();
-        
+
         if (window.markDataRefresh) window.markDataRefresh();
+        return true;
     } catch (error) {
         console.error('Weather fetch failed:', error);
         currentTemp = '--';
         document.getElementById('current-temp').textContent = '--°';
         document.getElementById('feels-like').textContent = 'Weather unavailable';
+        return false;
     }
 }
 
-// Update calendar (5 days, columnar layout)
+// Update calendar (5 days, columnar layout). Returns true on success.
+// First-load nuance: pi-server.js delays the initial calendar cache fill by
+// ~2s and calendar-all.js itself takes a few more seconds, so the dashboard
+// can race the server and see an empty list. Treat that as "not ready, retry"
+// (matches the old boot-time retry loop). Once we've ever seen events, empty
+// is a valid steady-state result.
 let calendarLoaded = false;
 async function updateCalendar() {
     try {
         const response = await fetch('/api/calendar?days=5');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         renderCalendar(data.events);
         // Apply past event hiding immediately after render to prevent flash
         if (typeof handlePastEvents === 'function') handlePastEvents();
-        if (data.events && data.events.length > 0) { 
-            calendarLoaded = true; 
+        if (data.events && data.events.length > 0) {
+            calendarLoaded = true;
         }
-        
+
         if (window.markDataRefresh) window.markDataRefresh();
+        return calendarLoaded;
     } catch (error) {
         console.error('Calendar fetch failed:', error);
+        return false;
     }
 }
 
@@ -273,13 +283,16 @@ function getCalendarColor(calendarName) {
 async function loadPhotos() {
     try {
         const response = await fetch('/api/photos');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         photos = data.photos || [];
         currentPhotoIndex = 0;
         if (photos.length > 0) showNextPhoto();
         if (window.markDataRefresh) window.markDataRefresh();
+        return true;
     } catch (error) {
         console.error('Photos fetch failed:', error);
+        return false;
     }
 }
 
@@ -363,10 +376,12 @@ function svgToWeatherIcon(iconPath) {
     return map[name] || 'wi-cloudy';
 }
 
-// Apply display config
+// Apply display config. Returns the config on success, null on failure (so
+// startResilientFetcher can fast-retry it after a transient WiFi blip).
 async function applyDisplayConfig() {
     try {
         const r = await fetch('/api/config');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const cfg = await r.json();
         displayConfig = cfg.display || {};
         
@@ -401,42 +416,69 @@ async function applyDisplayConfig() {
         applyPhotoStyle(cfg.display?.photoStyle || 'fill');
         
         return cfg;
-    } catch(e) { 
-        console.error('Display config error:', e); 
-        return { display: {} };
+    } catch(e) {
+        console.error('Display config error:', e);
+        return null;
     }
+}
+
+// Wrap an async fetcher (returns truthy on success, falsy on failure) so that:
+//   - it runs on `slowMs` cadence in steady state,
+//   - on failure it runs again every `fastMs` until the next success,
+//   - then drops back to the slow cadence.
+// This is the key to surviving short WiFi blips: a single failed refresh no
+// longer means the dashboard waits 5–10 minutes before trying again.
+function startResilientFetcher(name, fn, slowMs, fastMs = 30000) {
+    let fastTimer = null;
+    const tick = async () => {
+        let ok = false;
+        try { ok = await fn(); } catch (e) { console.error(name + ' tick error:', e); }
+        if (ok) {
+            if (fastTimer) { clearInterval(fastTimer); fastTimer = null; }
+        } else if (!fastTimer) {
+            fastTimer = setInterval(tick, fastMs);
+        }
+    };
+    setInterval(tick, slowMs);
+    return tick;
 }
 
 // Initialize dashboard
 async function init() {
     const cfg = await applyDisplayConfig();
-    const display = cfg.display || {};
-    
+    const display = (cfg && cfg.display) || {};
+
     updateClock();
-    updateWeather();
-    updateCalendar();
-    loadPhotos();
-    
+    setInterval(updateClock, 1000);
+
     const photoInterval = (display.photoInterval || 30) * 60 * 1000;
     const weatherRefresh = (display.weatherRefresh || 10) * 60 * 1000;
     const calendarRefresh = (display.calendarRefresh || 5) * 60 * 1000;
-    
-    setInterval(updateClock, 1000);
-    setInterval(updateWeather, weatherRefresh);
-    const wxRetry = setInterval(() => { 
-        updateWeather().then(() => clearInterval(wxRetry)).catch(() => {}); 
-    }, 10000);
-    setInterval(updateCalendar, calendarRefresh);
-    const calRetry = setInterval(() => { 
-        if (!calendarLoaded) { 
-            updateCalendar(); 
-        } else { 
-            clearInterval(calRetry); 
-        } 
-    }, 10000);
+
+    const tickWeather  = startResilientFetcher('weather',  updateWeather,  weatherRefresh);
+    const tickCalendar = startResilientFetcher('calendar', updateCalendar, calendarRefresh);
+    const tickPhotos   = startResilientFetcher('photos',   loadPhotos,     photoInterval, 60000);
+    const tickConfig   = startResilientFetcher('config',   async () => !!(await applyDisplayConfig()), 5 * 60 * 1000, 60000);
+
+    // Initial fetches — ticks immediately so the dashboard renders without
+    // waiting for the first slow interval.
+    tickWeather();
+    tickCalendar();
+    tickPhotos();
+
     setInterval(showNextPhoto, photoInterval);
-    setInterval(applyDisplayConfig, 5 * 60 * 1000);
-    
+
+    // Browser-level connectivity changes: kick every fetcher right away.
+    // navigator.onLine flips after the OS reports the network is back; pulling
+    // immediately means stale data is replaced within seconds of WiFi recovery
+    // instead of waiting for the next 5–15 min interval tick.
+    window.addEventListener('online', () => {
+        tickWeather();
+        tickCalendar();
+        tickPhotos();
+        tickConfig();
+    });
+
     // Hide loading indicator after 30 seconds regardless of API success/failure
     setTimeout(() => {
         const loader = document.getElementById('loading-indicator');

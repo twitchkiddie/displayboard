@@ -274,11 +274,13 @@ function getMoonPhase(date) {
 
 let weatherCache = null;
 let weatherUpdating = false;
+let weatherRetryTimer = null;
 try { weatherCache = JSON.parse(fs.readFileSync(WEATHER_CACHE_FILE, 'utf8')); console.log('🌤️  Loaded cached weather'); } catch (_) {}
 
 async function updateWeatherCache() {
   if (weatherUpdating) return;
   weatherUpdating = true;
+  let success = false;
   try {
     const { latitude: LAT, longitude: LON, timezone: TZ } = config.location;
     const raw = await httpGet(
@@ -316,10 +318,18 @@ async function updateWeatherCache() {
     weatherCache = { current, forecast, lastUpdated: Date.now() };
     console.log('🌤️  Weather cache updated');
     try { fs.writeFileSync(WEATHER_CACHE_FILE, JSON.stringify(weatherCache)); } catch (_) {}
+    success = true;
   } catch (err) {
     console.error('Weather cache update error:', err.message);
   } finally {
     weatherUpdating = false;
+  }
+  // After a transient WiFi/DNS blip the regular 15-min interval is too slow;
+  // schedule a 60s one-shot until success so the dashboard catches up quickly.
+  if (success) {
+    if (weatherRetryTimer) { clearTimeout(weatherRetryTimer); weatherRetryTimer = null; }
+  } else if (!weatherRetryTimer) {
+    weatherRetryTimer = setTimeout(() => { weatherRetryTimer = null; updateWeatherCache(); }, 60000);
   }
 }
 
@@ -331,10 +341,16 @@ function handleWeatherExtended(req, res) {
 // ─── Calendar cache (background-refreshed via calendar-all.js) ───────────────
 let calendarCache = { events: [], lastUpdated: 0 };
 let calendarUpdating = false;
+let calendarRetryTimer = null;
 try {
   calendarCache = JSON.parse(fs.readFileSync(CALENDAR_CACHE_FILE, 'utf8'));
   console.log('📅 Loaded cached calendar: ' + (calendarCache.events?.length || 0) + ' events');
 } catch (_) {}
+
+function scheduleCalendarRetry() {
+  if (calendarRetryTimer) return;
+  calendarRetryTimer = setTimeout(() => { calendarRetryTimer = null; updateCalendarCache(); }, 60000);
+}
 
 function updateCalendarCache() {
   if (calendarUpdating) return;
@@ -344,13 +360,22 @@ function updateCalendarCache() {
   const calScript = path.join(__dirname, 'calendar-all.js');
   execAsync(`node "${calScript}" ${days} "${CONFIG_PATH}" --json`, { timeout: 120000 }, (err, stdout) => {
     calendarUpdating = false;
-    if (err) return console.error('Calendar cache update error:', err.message);
+    if (err) {
+      console.error('Calendar cache update error:', err.message);
+      // Same rationale as weather: a 1-min WiFi blip shouldn't strand stale
+      // calendar data on the dashboard for the next 5-min interval tick.
+      return scheduleCalendarRetry();
+    }
     try {
       calendarCache = JSON.parse(stdout);
       calendarCache.lastUpdated = Date.now();
       console.log(`📅 Calendar cache updated: ${calendarCache.events?.length || 0} events`);
       try { fs.writeFileSync(CALENDAR_CACHE_FILE, JSON.stringify(calendarCache)); } catch (_) {}
-    } catch (e) { console.error('Calendar parse error:', e.message); }
+      if (calendarRetryTimer) { clearTimeout(calendarRetryTimer); calendarRetryTimer = null; }
+    } catch (e) {
+      console.error('Calendar parse error:', e.message);
+      scheduleCalendarRetry();
+    }
   });
 }
 
@@ -1170,13 +1195,12 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 
-// Kill any running polkit authentication agent and hide its xdg autostart
-// entry, so NetworkManager can never surface a password dialog over the kiosk
-// when it wants to request credentials. Kiosk has no human to answer prompts;
-// silent failure to reconnect is strictly better than a modal over the
-// dashboard. Runs on every startup (idempotent, writes overrides into
-// ~/.config/autostart if missing).
-function suppressKioskPrompts() {
+// Hide xdg autostart entries for every dialog-capable agent that could pop a
+// window over the kiosk: polkit auth agents (NetworkManager re-auth password
+// prompts) and the NetworkManager applet itself (libnotify "connection lost"
+// bubbles + the connection-edit dialog). Runs once at startup; the actual
+// pkill watchdog below catches anything that respawns mid-session.
+function installKioskPromptOverrides() {
   try {
     const home = process.env.HOME || '/home/pi';
     const autostartDir = path.join(home, '.config', 'autostart');
@@ -1186,7 +1210,9 @@ function suppressKioskPrompts() {
       'lxpolkit',
       'polkit-gnome-authentication-agent-1',
       'polkit-mate-authentication-agent-1',
-      'polkit-kde-authentication-agent-1'
+      'polkit-kde-authentication-agent-1',
+      'nm-applet',
+      'nm-tray'
     ];
     for (const name of agents) {
       const target = path.join(autostartDir, `${name}.desktop`);
@@ -1197,11 +1223,24 @@ function suppressKioskPrompts() {
         );
       }
     }
-    // Kill anything already running in this session.
-    try { execSync("pkill -f 'polkit-.*-authentication-agent|lxpolkit' 2>/dev/null || true", { timeout: 2000 }); } catch (_) {}
   } catch (e) {
-    console.error('Polkit suppression skipped:', e.message);
+    console.error('Polkit override install skipped:', e.message);
   }
+}
+
+// Periodic watchdog: pkill any dialog-capable agent that has slipped past the
+// xdg autostart override (e.g. respawned by labwc, started by another user
+// session, brought back by an apt update). The kiosk has no human to answer
+// prompts; silent reconnect failures are strictly better than a modal over
+// the dashboard, so we kill these on sight. Pattern matches the same set
+// installKioskPromptOverrides hides plus nm-connection-editor.
+function killKioskPromptAgents() {
+  try {
+    execSync(
+      "pkill -f 'polkit-.*-authentication-agent|lxpolkit|nm-applet|nm-tray|nm-connection-editor' 2>/dev/null || true",
+      { timeout: 2000 }
+    );
+  } catch (_) { /* best-effort */ }
 }
 
 // One-time migration: force psk-flags=0 on every saved WiFi connection so
@@ -1252,7 +1291,12 @@ server.listen(PORT, '0.0.0.0', () => {
   // Retrofit existing NM connections created before v1.1.18 so the kiosk
   // never sees a polkit password dialog on WiFi re-auth.
   setTimeout(hardenNmConnections, 7000);
-  // Also suppress any polkit authentication agent that might try to surface
-  // such a dialog (belt-and-suspenders — runs regardless of psk-flags state).
-  setTimeout(suppressKioskPrompts, 8000);
+  // Belt-and-suspenders for the same goal: hide the xdg autostart entries for
+  // every dialog-capable agent, then keep killing any respawn forever. A
+  // one-shot kill at startup misses agents spawned later by labwc, apt, or
+  // a session refresh — which was exactly the gap that left popups landing
+  // on the kitchen display after a brief WiFi drop.
+  setTimeout(installKioskPromptOverrides, 8000);
+  setTimeout(killKioskPromptAgents, 9000);
+  setInterval(killKioskPromptAgents, 60000);
 });
