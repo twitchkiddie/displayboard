@@ -215,6 +215,31 @@ echo "🌐 Setting up WiFi AP fallback..."
 bash "$(dirname "$0")/scripts/wifi-setup.sh"
 echo ""
 
+# ── Step 11a: Disable WiFi power management ──────────────────────────────────
+# Pi 3B+/4 brcmfmac aggressively idles the radio every few seconds, dropping
+# pings and causing NM to mark the link down + reassociate. The kiosk reads
+# this as "spotty WiFi". A NetworkManager drop-in with wifi.powersave=2 keeps
+# the radio hot for the cost of ~50mW. Also flip the running wlan0 so the
+# fix takes effect without needing a reboot.
+echo "📶 Disabling WiFi power management..."
+NM_CONF=/etc/NetworkManager/conf.d/displayboard-wifi-powersave.conf
+if [ ! -f "$NM_CONF" ]; then
+  sudo mkdir -p /etc/NetworkManager/conf.d
+  cat <<'EOF' | sudo tee "$NM_CONF" > /dev/null
+# Installed by DisplayBoard — keep the WiFi radio hot to avoid
+# brcmfmac power-save drops on Pi 3B+/4. 2 = disabled.
+[connection]
+wifi.powersave = 2
+EOF
+  sudo chmod 644 "$NM_CONF"
+  sudo systemctl reload NetworkManager 2>/dev/null || true
+  echo "   ✓ wifi.powersave drop-in installed"
+else
+  echo "   ✓ wifi.powersave drop-in already present"
+fi
+sudo iw dev wlan0 set power_save off 2>/dev/null || true
+echo ""
+
 # ── Step 11: Harden existing WiFi connections ────────────────────────────────
 # Connections created by Pi Imager, raspi-config, or netplan can be marked
 # "agent-owned" (psk-flags=1). When NetworkManager re-authenticates on a
