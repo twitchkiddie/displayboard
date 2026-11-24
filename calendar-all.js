@@ -11,6 +11,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+const { assertFetchableUrl } = require('./lib/guards');
+
 const CONFIG_PATH = process.argv[3] || path.join(__dirname, 'config.json');
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 
@@ -19,17 +21,20 @@ const CALENDARS = (config.calendars || [])
   .map(c => ({ name: c.name, url: c.url }));
 
 function fetchURL(url) {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https') ? https : http;
-    mod.get(url, { headers: { 'User-Agent': 'calendar-agent/1.0' } }, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location)
-        return fetchURL(res.headers.location).then(resolve).catch(reject);
+  return assertFetchableUrl(url).then((parsed) => new Promise((resolve, reject) => {
+    const mod = parsed.protocol === 'https:' ? https : http;
+    mod.get(parsed, { headers: { 'User-Agent': 'calendar-agent/1.0' } }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const next = new URL(res.headers.location, parsed).href;
+        res.resume();
+        return fetchURL(next).then(resolve).catch(reject);
+      }
       if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve(data));
     }).on('error', reject);
-  });
+  }));
 }
 
 function isAllDay(vevent) {

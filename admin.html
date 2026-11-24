@@ -112,7 +112,7 @@
     <div id="pin-modal" style="position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div style="background: #1e293b; border-radius: 16px; padding: 40px; max-width: 400px; width: 90%; text-align: center;">
             <h2 style="margin: 0 0 12px; font-size: 24px;">🔐 Admin Access</h2>
-            <p style="color: #94a3b8; margin: 0 0 24px;">Enter your admin PIN</p><p style="color: #475569; font-size: 13px; margin: -16px 0 24px;">Default PIN: <strong style="color:#64748b">123456</strong></p>
+            <p style="color: #94a3b8; margin: 0 0 24px;">Enter your admin PIN</p><p id="default-pin-hint" style="display:none;color: #475569; font-size: 13px; margin: -16px 0 24px;">Default PIN: <strong id="default-pin-value" style="color:#64748b"></strong></p>
             <input type="password" id="pin-input" placeholder="••••••" style="width: 100%; padding: 16px; font-size: 20px; text-align: center; letter-spacing: 8px; background: #0f172a; border: 2px solid #334155; border-radius: 8px; color: #e2e8f0; margin-bottom: 16px;" maxlength="8">
             <div id="pin-error" style="color: #f87171; margin-bottom: 16px; min-height: 20px; font-size: 14px;"></div>
             <button onclick="validatePin()" class="btn btn-primary" style="width: 100%; padding: 14px; font-size: 16px;">Unlock</button>
@@ -646,6 +646,12 @@
 
     // Allow Enter key to submit PIN
     document.addEventListener('DOMContentLoaded', () => {
+        fetch('/api/setup-hint').then(r => r.json()).then(d => {
+            if (d && d.defaultPin) {
+                document.getElementById('default-pin-value').textContent = d.defaultPin;
+                document.getElementById('default-pin-hint').style.display = 'block';
+            }
+        }).catch(() => {});
         const pinInput = document.getElementById('pin-input');
         if (pinInput) {
             pinInput.focus();
@@ -685,7 +691,8 @@
             return;
         }
         
-        await loadConfig();
+        const configOk = await loadConfig();
+        if (!configOk) return;
         await loadStatus();
         await loadPreview();
         await checkDisplayPower();
@@ -700,7 +707,7 @@
 
         // If running in AP mode, auto-switch to WiFi tab and show banner
         try {
-            const wsr = await fetch('/api/wifi/status');
+            const wsr = await fetch('/api/wifi/status', { headers: getAuthHeaders() });
             const ws = await wsr.json();
             if (ws.mode === 'ap') {
                 // Switch to WiFi tab
@@ -772,7 +779,9 @@
             document.getElementById('auto-update').checked = currentConfig.updates?.autoUpdate || false;
             document.getElementById('auto-update-hour').value = currentConfig.updates?.autoUpdateHour ?? 3;
             updateAutoUpdateHourDisplay();
+            return true;
         } catch(e) { showAlert('error', 'Failed to load config: ' + e.message); }
+        return false;
     }
 
     async function loadStatus() {
@@ -935,7 +944,7 @@
     }
 
     async function refreshDashboard() {
-        try { await fetch('/api/refresh'); showAlert('success', '🔄 Dashboard refreshed'); } catch(e) { showAlert('error', e.message); }
+        try { await fetch('/api/refresh', { headers: getAuthHeaders() }); showAlert('success', '🔄 Dashboard refreshed'); } catch(e) { showAlert('error', e.message); }
     }
 
     async function refreshCalendar() {
@@ -981,7 +990,7 @@
 
     async function checkDisplayPower() {
         try {
-            const r = await fetch('/api/display-power', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ power: 'status' }) });
+            const r = await fetch('/api/display-power', { method: 'POST', headers: {'Content-Type':'application/json', ...getAuthHeaders()}, body: JSON.stringify({ power: 'status' }) });
             const d = await r.json();
             const el = document.getElementById('display-power-status');
             el.textContent = d.power === 'on' ? '🟢 On' : '🔴 Off';
@@ -1047,19 +1056,20 @@
 
     async function loadSystemInfo() {
         try {
-            const r = await fetch('/api/system-info');
+            const r = await fetch('/api/system-info', { headers: getAuthHeaders() });
             const d = await r.json();
+            const row = (label, value) => `<span style="color:#64748b;">${label}</span><span>${escapeHtml(value)}</span>`;
             document.getElementById('system-info').innerHTML = `
                 <div style="display:grid; grid-template-columns:140px 1fr; gap:8px 16px;">
-                    <span style="color:#64748b;">Hostname</span><span>${d.hostname}</span>
-                    <span style="color:#64748b;">Model</span><span>${d.model}</span>
-                    <span style="color:#64748b;">OS</span><span>${d.os}</span>
-                    <span style="color:#64748b;">IP Address</span><span>${d.ip}</span>
-                    <span style="color:#64748b;">Uptime</span><span>${d.uptime}</span>
-                    <span style="color:#64748b;">Memory</span><span>${d.memory}</span>
-                    <span style="color:#64748b;">Disk</span><span>${d.disk}</span>
-                    <span style="color:#64748b;">CPU Temp</span><span>${d.cpu_temp}</span>
-                    <span style="color:#64748b;">Node.js</span><span>${d.node}</span>
+                    ${row('Hostname', d.hostname)}
+                    ${row('Model', d.model)}
+                    ${row('OS', d.os)}
+                    ${row('IP Address', d.ip)}
+                    ${row('Uptime', d.uptime)}
+                    ${row('Memory', d.memory)}
+                    ${row('Disk', d.disk)}
+                    ${row('CPU Temp', d.cpu_temp)}
+                    ${row('Node.js', d.node)}
                 </div>`;
         } catch(e) { document.getElementById('system-info').textContent = 'Failed to load: ' + e.message; }
     }
@@ -1077,7 +1087,7 @@
     async function checkForUpdates(forceRefresh = false) {
         try {
             const url = forceRefresh ? '/api/version-info?force=true' : '/api/version-info';
-            const r = await fetch(url);
+            const r = await fetch(url, { headers: getAuthHeaders() });
             const info = await r.json();
             
             document.getElementById('current-version').textContent = 'v' + info.version;
@@ -1127,7 +1137,7 @@
 
     async function checkBackupExists() {
         try {
-            const r = await fetch('/api/backup-exists');
+            const r = await fetch('/api/backup-exists', { headers: getAuthHeaders() });
             const d = await r.json();
             document.getElementById('rollback-btn').style.display = d.exists ? 'inline-flex' : 'none';
         } catch(e) {}
@@ -1156,7 +1166,7 @@
 
     async function pollUpdateStatus() {
         try {
-            const r = await fetch('/api/update-status');
+            const r = await fetch('/api/update-status', { headers: getAuthHeaders() });
             const status = await r.json();
 
             const progressBar = document.getElementById('update-progress-bar');
@@ -1206,7 +1216,7 @@
 
     async function loadHostname() {
         try {
-            const r = await fetch('/api/hostname');
+            const r = await fetch('/api/hostname', { headers: getAuthHeaders() });
             const d = await r.json();
             const input = document.getElementById('hostname-input');
             const preview = document.getElementById('hostname-preview');
@@ -1286,7 +1296,7 @@
     async function loadWifiStatus() {
         const info = document.getElementById('wifi-current-info');
         try {
-            const r = await fetch('/api/wifi/status');
+            const r = await fetch('/api/wifi/status', { headers: getAuthHeaders() });
             if (!r.ok) throw new Error('status ' + r.status);
             const d = await r.json();
             if (d.mode === 'ap') {
@@ -1385,7 +1395,7 @@
     // Display settings — load current values from /api/display-info
     async function loadDisplayInfo() {
         try {
-            const r = await fetch('/api/display-info');
+            const r = await fetch('/api/display-info', { headers: getAuthHeaders() });
             const d = await r.json();
             if (d.error) { console.error('Display info error:', d.error); return; }
 

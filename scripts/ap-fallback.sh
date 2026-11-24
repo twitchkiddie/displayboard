@@ -17,28 +17,59 @@ cleanup() {
     killall dnsmasq 2>/dev/null || true
     rm -f "$FLAG_FILE" "$STATUS_FILE"
 
-    # Apply any pending WiFi credentials saved by the admin panel
+    # Apply any pending WiFi credentials saved by the admin panel.
+    # Python writes the keyfile so a newline in the SSID or passphrase cannot
+    # inject extra NetworkManager settings. The passphrase is not echoed.
     PENDING_FILE="$(dirname "$0")/../wifi-pending.json"
     if [ -f "$PENDING_FILE" ]; then
         echo "Applying pending WiFi credentials..."
-        SSID=$(python3 -c "import json;d=json.load(open('$PENDING_FILE'));print(d['ssid'])" 2>/dev/null)
-        PASS=$(python3 -c "import json;d=json.load(open('$PENDING_FILE'));print(d.get('password',''))" 2>/dev/null)
-        if [ -n "$SSID" ]; then
-            SAFE=$(echo "$SSID" | tr -cd 'a-zA-Z0-9_-')
-            CONN_FILE="/etc/NetworkManager/system-connections/displayboard-${SAFE}.nmconnection"
-            # psk-flags=0 stores the PSK system-wide so NetworkManager
-            # re-authenticates silently on reconnect, rather than asking a
-            # session polkit agent (which would pop a password dialog over the
-            # kiosk display).
-            if [ -n "$PASS" ]; then
-                SECURITY="[wifi-security]\nauth-alg=open\nkey-mgmt=wpa-psk\npsk=${PASS}\npsk-flags=0\n\n"
-            else
-                SECURITY=""
-            fi
-            printf "[connection]\nid=%s\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n%s[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n" \
-                "$SSID" "$SSID" "$SECURITY" > "$CONN_FILE"
-            chmod 600 "$CONN_FILE"
-            echo "WiFi credentials saved for: $SSID"
+        if python3 - "$PENDING_FILE" << 'PY'
+import json, os, re, sys
+path = sys.argv[1]
+with open(path) as fh:
+    data = json.load(fh)
+ssid = data.get("ssid") or ""
+password = data.get("password") or ""
+
+def bad(value):
+    return any(ord(ch) < 32 or ord(ch) == 127 or ch in "[]" for ch in value)
+
+if not ssid or len(ssid.encode()) > 32 or bad(ssid):
+    sys.exit("invalid ssid")
+if password and (len(password) < 8 or len(password) > 63 or bad(password)):
+    sys.exit("invalid password")
+safe = re.sub(r"[^A-Za-z0-9_-]", "_", ssid)[:32] or "wifi"
+dest = f"/etc/NetworkManager/system-connections/displayboard-{safe}.nmconnection"
+lines = [
+    "[connection]",
+    f"id={ssid}",
+    "type=wifi",
+    "autoconnect=true",
+    "",
+    "[wifi]",
+    "mode=infrastructure",
+    f"ssid={ssid}",
+    "",
+]
+if password:
+    lines += [
+        "[wifi-security]",
+        "auth-alg=open",
+        "key-mgmt=wpa-psk",
+        f"psk={password}",
+        "psk-flags=0",
+        "",
+    ]
+lines += ["[ipv4]", "method=auto", "", "[ipv6]", "method=auto", ""]
+fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as out:
+    out.write("\n".join(lines) + "\n")
+PY
+        then
+            echo "WiFi credentials saved"
+            rm -f "$PENDING_FILE"
+        else
+            echo "Pending WiFi credentials were rejected"
             rm -f "$PENDING_FILE"
         fi
     fi

@@ -131,16 +131,19 @@
       pointer-events: none;
       z-index: 9999;
       transition: opacity 2s;
-    ">⚙️ Admin: http://<span id="admin-hint-ip">...</span>:3000/admin.html &nbsp;·&nbsp; PIN: 123456</div>
+    ">⚙️ Admin: http://<span id="admin-hint-ip">...</span>:3000/admin.html<span id="admin-hint-pin"></span></div>
 
     <script src="dashboard.js"></script>
     <script src="display-enhancements.js"></script>
     <script>
       // Populate admin hint IP and fade out after 60s
       (function() {
-        fetch('/api/system-info').then(r => r.json()).then(d => {
+        fetch('/api/setup-hint').then(r => r.json()).then(d => {
           var ip = (d && d.ip) ? d.ip : window.location.hostname;
           document.getElementById('admin-hint-ip').textContent = ip;
+          if (d && d.defaultPin) {
+            document.getElementById('admin-hint-pin').textContent = ' · PIN: ' + d.defaultPin;
+          }
         }).catch(function() {
           document.getElementById('admin-hint-ip').textContent = window.location.hostname;
         });

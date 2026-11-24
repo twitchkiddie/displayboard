@@ -97,7 +97,7 @@
         <div class="step-title">Open the Admin Panel</div>
         <div class="step-desc">From any device on your network, navigate to:</div>
         <div class="url-box" id="admin-url">http://<span id="local-ip">...</span>:3000/admin.html</div>
-        <div class="pin-hint">Default PIN: <strong>123456</strong></div>
+        <div class="pin-hint" id="pin-hint" style="display:none">Default PIN: <strong id="pin-hint-value"></strong></div>
       </div>
     </div>
     <div class="step">
@@ -130,11 +130,15 @@
 
 <script>
   // Get local IP from server
-  fetch('/api/system-info')
+  fetch('/api/setup-hint')
     .then(r => r.json())
     .then(d => {
       const ip = d.ip || window.location.hostname;
       document.getElementById('local-ip').textContent = ip;
+      if (d.defaultPin) {
+        document.getElementById('pin-hint-value').textContent = d.defaultPin;
+        document.getElementById('pin-hint').style.display = 'block';
+      }
     })
     .catch(() => {
       document.getElementById('local-ip').textContent = window.location.hostname;

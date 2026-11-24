@@ -25,9 +25,11 @@
 const http = require('http');
 const https = require('https');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const url = require('url');
-const { execSync, exec: execAsync } = require('child_process');
+const { execSync, execFileSync, execFile, exec: execAsync } = require('child_process');
+const guards = require('./lib/guards');
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PORT = 3000;
@@ -45,8 +47,6 @@ const AP_SCAN_FILE = '/tmp/displayboard-wifi-networks.json';
 
 // Environment required to reach the Wayland compositor started by labwc under
 // the `pi` user. Needed for every wlr-randr invocation.
-const WLR_ENV = 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000';
-
 // The version cached at import time drives the /api/version-info compare; the
 // file itself is re-read during checkForUpdates so we also see post-update state.
 const VERSION = (() => {
@@ -84,12 +84,16 @@ if (!config.updates) {
   saveConfigFile();
 }
 if (!config.adminPin) {
-  config.adminPin = '123456';
+  config.adminPin = guards.DEFAULT_PIN;
   saveConfigFile();
-  console.log('🔐 Default admin PIN set: 123456 — change it in the admin panel!');
+  console.log('🔐 Default admin PIN is in place — change it in the admin panel');
+} else if (config.adminPin === guards.DEFAULT_PIN) {
+  console.log('🔐 Admin PIN is still the default — change it in the admin panel');
 } else {
-  console.log('🔐 Admin PIN: ' + config.adminPin);
+  console.log('🔐 Admin PIN configured');
 }
+
+const authLimiter = new guards.AuthRateLimiter();
 
 // "Unconfigured" = the sample location from config.example.json is still in place.
 function isFirstRun() {
@@ -126,36 +130,80 @@ function watchForChanges() {
 watchForChanges();
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
-function sendJSON(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+function sendJSON(res, status, data, extraHeaders) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+    ...(extraHeaders || {}),
+  });
   res.end(JSON.stringify(data));
 }
 
-// Collect a request body into a string. Handlers call JSON.parse themselves so
-// they control how to respond on parse failure.
-function readBody(req) {
+// Collect a request body into a string, capped so a client cannot exhaust memory.
+function readBody(req, limit = 1024 * 1024) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        const err = new Error('Payload too large');
+        err.statusCode = 413;
+        fail(err);
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', fail);
   });
 }
 
-// Authorization: Bearer <adminPin>. Writes a 401 on failure and returns false,
-// so callers can `if (!requireAuth(req, res)) return;`.
+function clientIp(req) {
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+function presentedPin(req) {
+  const header = req.headers.authorization || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : '';
+}
+
+function authLocked(req, res) {
+  const gate = authLimiter.check(clientIp(req));
+  if (gate.ok) return false;
+  sendJSON(res, 429, { error: 'Too many attempts. Try again later.' }, {
+    'Retry-After': String(gate.retryAfterSec),
+  });
+  return true;
+}
+
+// Authorization: Bearer <adminPin>. Writes 401/429 on failure and returns false,
+// so callers can `if (!requireAuth(req, res)) return;`. An empty PIN fails closed.
 function requireAuth(req, res) {
+  if (authLocked(req, res)) return false;
   const pin = config.adminPin;
-  if (!pin) return true;
-  if (req.headers.authorization === `Bearer ${pin}`) return true;
+  if (pin && guards.safeEqual(presentedPin(req), String(pin))) {
+    authLimiter.success(clientIp(req));
+    return true;
+  }
+  authLimiter.fail(clientIp(req));
   sendJSON(res, 401, { error: 'Unauthorized. PIN required.' });
   return false;
 }
 
-function isAuthenticated(req) {
-  const pin = config.adminPin;
-  return !pin || req.headers.authorization === `Bearer ${pin}`;
-}
 
 // ─── Static file serving ─────────────────────────────────────────────────────
 const MIME_TYPES = {
@@ -165,13 +213,7 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon'
 };
 
-function serveStatic(req, res) {
-  let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : decodeURIComponent(url.parse(req.url).pathname));
-  filePath = path.resolve(filePath);
-  // Path traversal protection — refuse anything outside the project directory.
-  if (!filePath.startsWith(path.resolve(__dirname))) {
-    res.writeHead(403); return res.end('Forbidden');
-  }
+function sendFile(res, filePath) {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   fs.readFile(filePath, (err, data) => {
@@ -180,10 +222,22 @@ function serveStatic(req, res) {
     const noCache = ['.html', '.js', '.css'].includes(ext);
     res.writeHead(200, {
       'Content-Type': contentType,
+      'X-Content-Type-Options': 'nosniff',
       'Cache-Control': noCache ? 'no-cache, no-store, must-revalidate' : 'public, max-age=3600'
     });
     res.end(data);
   });
+}
+
+function serveStatic(req, res) {
+  const pathname = url.parse(req.url).pathname || '/';
+  if (pathname === '/') return sendFile(res, path.join(__dirname, 'index.html'));
+  const resolved = guards.resolveStaticPath(__dirname, pathname);
+  if (!resolved.ok) {
+    res.writeHead(resolved.status, { 'X-Content-Type-Options': 'nosniff' });
+    return res.end(resolved.status === 400 ? 'Bad Request' : 'Forbidden');
+  }
+  sendFile(res, resolved.filePath);
 }
 
 // ─── Outbound HTTP helpers ───────────────────────────────────────────────────
@@ -210,15 +264,23 @@ function httpGet(reqUrl, options = {}) {
 }
 
 // Download to disk, following 301/302 redirects. Used by the in-place updater.
-function httpDownload(reqUrl, destPath) {
+function httpDownload(reqUrl, destPath, allowedHosts) {
   return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL(reqUrl); }
+    catch (_) { reject(new Error('Invalid download URL')); return; }
+    if (allowedHosts && !allowedHosts.has(parsed.hostname)) {
+      reject(new Error('Unexpected download host'));
+      return;
+    }
     const file = fs.createWriteStream(destPath);
-    const lib = reqUrl.startsWith('https') ? https : http;
-    const req = lib.get(reqUrl, { timeout: 60000 }, (res) => {
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.get(parsed, { timeout: 60000 }, (res) => {
       if (res.statusCode === 302 || res.statusCode === 301) {
         file.close();
-        fs.unlinkSync(destPath);
-        return httpDownload(res.headers.location, destPath).then(resolve).catch(reject);
+        try { fs.unlinkSync(destPath); } catch (_) {}
+        const next = new URL(res.headers.location, parsed).href;
+        return httpDownload(next, destPath, allowedHosts).then(resolve).catch(reject);
       }
       res.pipe(file);
       file.on('finish', () => { file.close(); resolve(); });
@@ -282,10 +344,12 @@ async function updateWeatherCache() {
   weatherUpdating = true;
   let success = false;
   try {
-    const { latitude: LAT, longitude: LON, timezone: TZ } = config.location;
+    const loc = guards.validateLocation(config.location);
+    if (loc.error) throw new Error(loc.error);
+    const { latitude: LAT, longitude: LON, timezone: TZ } = loc.value;
     const raw = await httpGet(
-      `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-      `&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=${TZ}` +
+      `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(LAT)}&longitude=${encodeURIComponent(LON)}` +
+      `&temperature_unit=fahrenheit&windspeed_unit=mph&timezone=${encodeURIComponent(TZ)}` +
       `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode,sunrise,sunset` +
       `&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m,relativehumidity_2m`
     );
@@ -356,9 +420,9 @@ function updateCalendarCache() {
   if (calendarUpdating) return;
   calendarUpdating = true;
   // +2 days so that filtering past events on the client still leaves N full days.
-  const days = (config.display?.calendarDays || 5) + 2;
+  const days = guards.clampCalendarDays(config.display?.calendarDays) + 2;
   const calScript = path.join(__dirname, 'calendar-all.js');
-  execAsync(`node "${calScript}" ${days} "${CONFIG_PATH}" --json`, { timeout: 120000 }, (err, stdout) => {
+  execFile(process.execPath, [calScript, String(days), CONFIG_PATH, '--json'], { timeout: 120000 }, (err, stdout) => {
     calendarUpdating = false;
     if (err) {
       console.error('Calendar cache update error:', err.message);
@@ -407,8 +471,8 @@ function handlePhotos(req, res) {
   let photos = [];
   if (fs.existsSync(PHOTOS_DIR)) {
     photos = fs.readdirSync(PHOTOS_DIR)
-      .filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f))
-      .map(f => `/photos/${f}`);
+      .filter(f => /\.(jpg|jpeg|png|gif|webp)$/i.test(f) && !f.includes('..') && !/['"\\\r\n]/.test(f))
+      .map(f => `/photos/${encodeURIComponent(f)}`);
     // Fisher-Yates so the dashboard sees a different starting order each reload.
     for (let i = photos.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -422,7 +486,10 @@ function handleSyncPhotos(req, res) {
   if (!requireAuth(req, res)) return;
   const syncScript = path.join(__dirname, 'icloud-album-sync.js');
   const token = config.photoAlbumToken || '';
-  execAsync(`node "${syncScript}" "${token}" "${PHOTOS_DIR}"`, { timeout: 300000 }, (err, stdout) => {
+  if (!guards.isAlbumToken(token)) {
+    return sendJSON(res, 400, { error: 'Invalid album token' });
+  }
+  execFile(process.execPath, [syncScript, token, PHOTOS_DIR], { timeout: 300000 }, (err, stdout) => {
     if (err) console.error('Photo sync error:', err.message);
     else console.log('📸 Photo sync complete:', stdout.trim());
   });
@@ -433,7 +500,7 @@ function handleUploadPhoto(req, res) {
   if (!requireAuth(req, res)) return;
 
   const MAX_UPLOAD = 10 * 1024 * 1024; // 10 MB
-  if (parseInt(req.headers['content-length'] || '0') > MAX_UPLOAD) {
+  if (parseInt(req.headers['content-length'] || '0', 10) > MAX_UPLOAD) {
     return sendJSON(res, 413, { error: 'File too large (max 10MB)' });
   }
 
@@ -443,17 +510,26 @@ function handleUploadPhoto(req, res) {
   if (!fs.existsSync(PHOTOS_DIR)) fs.mkdirSync(PHOTOS_DIR, { recursive: true });
 
   const chunks = [];
-  req.on('data', c => chunks.push(c));
+  let received = 0;
+  req.on('data', c => {
+    received += c.length;
+    if (received > MAX_UPLOAD) {
+      sendJSON(res, 413, { error: 'File too large (max 10MB)' });
+      req.destroy();
+      return;
+    }
+    chunks.push(c);
+  });
   req.on('end', () => {
+    if (received > MAX_UPLOAD) return;
     const buf = Buffer.concat(chunks);
     // Extract a single file out of a basic multipart/form-data body.
     const headerEnd = buf.indexOf('\r\n\r\n');
     if (headerEnd < 0) { res.writeHead(400); return res.end('Bad upload'); }
     const headerStr = buf.slice(0, headerEnd).toString();
-    let filename = (headerStr.match(/filename="([^"]+)"/) || [])[1] || `upload-${Date.now()}.jpg`;
-    // Sanitize: only alphanumerics, dash, dot, underscore; prevent dotfiles.
-    filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    if (filename.startsWith('.')) filename = 'upload_' + filename;
+    const rawName = (headerStr.match(/filename="([^"]+)"/) || [])[1] || `upload-${Date.now()}.jpg`;
+    const filename = guards.sanitizeUploadFilename(rawName);
+    if (!filename) return sendJSON(res, 400, { error: 'Invalid filename. Use a JPEG or PNG name.' });
 
     const dataStart = headerEnd + 4;
     const endBoundary = buf.indexOf(Buffer.from('--' + boundary), dataStart);
@@ -466,7 +542,9 @@ function handleUploadPhoto(req, res) {
       return sendJSON(res, 400, { error: 'Invalid file type. Only JPEG and PNG supported.' });
     }
 
-    fs.writeFileSync(path.join(PHOTOS_DIR, filename), fileData);
+    const dest = path.join(PHOTOS_DIR, filename);
+    if (path.dirname(dest) !== PHOTOS_DIR) return sendJSON(res, 400, { error: 'Invalid filename' });
+    fs.writeFileSync(dest, fileData);
     sendJSON(res, 200, { ok: true, filename });
   });
 }
@@ -500,7 +578,11 @@ function sanitizeConfig(cfg) {
 function handleConfigGet(req, res) {
   // Authenticated callers (admin panel) see the full config; the dashboard gets
   // the sanitized view so a stolen-screenshot can't leak calendar/album URLs.
-  sendJSON(res, 200, isAuthenticated(req) ? config : sanitizeConfig(config));
+  // A missing Authorization header is the dashboard and is not a failed guess.
+  // A present header is checked (and rate-limited) so this route is not a PIN oracle.
+  if (!presentedPin(req)) return sendJSON(res, 200, sanitizeConfig(config));
+  if (!requireAuth(req, res)) return;
+  sendJSON(res, 200, config);
 }
 
 async function handleConfigPost(req, res) {
@@ -514,7 +596,25 @@ async function handleConfigPost(req, res) {
     const isEmpty = v => v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v));
     for (const key of Object.keys(incoming)) {
       // adminPin is only changeable via /api/change-pin.
-      if (key === 'adminPin') continue;
+      if (key === 'adminPin' || key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+
+      if (key === 'photoAlbumToken' && incoming.photoAlbumToken && !guards.isAlbumToken(incoming.photoAlbumToken)) {
+        return sendJSON(res, 400, { error: 'Invalid album token' });
+      }
+
+      if (key === 'calendars') {
+        if (Array.isArray(incoming.calendars)) {
+          for (const cal of incoming.calendars) {
+            if (cal && cal.url) {
+              const check = guards.classifyUrl(cal.url);
+              if (!check.ok) return sendJSON(res, 400, { error: 'Calendar URL blocked: ' + check.reason });
+            }
+            if (cal && cal.color && !guards.isHexColor(cal.color)) {
+              return sendJSON(res, 400, { error: 'Invalid calendar color' });
+            }
+          }
+        }
+      }
 
       if (key === 'calendars') {
         // Calendars are replaced wholesale, but empty URLs fall back to the
@@ -534,6 +634,10 @@ async function handleConfigPost(req, res) {
       } else if (!isEmpty(incoming[key])) {
         merged[key] = incoming[key];
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(incoming, 'location') && merged.location) {
+      const loc = guards.validateLocation(merged.location);
+      if (loc.error) return sendJSON(res, 400, { error: loc.error });
     }
     config = merged;
     saveConfigFile();
@@ -561,32 +665,54 @@ function handleLogs(req, res) {
 // Pick the first real (non-headless) output from wlr-randr --json.
 // labwc exposes a NOOP-* headless dummy that stays "enabled: true" when the
 // physical monitor is asleep — skip it so we report actual HDMI state.
+function wlrEnv() {
+  return { ...process.env, WAYLAND_DISPLAY: 'wayland-0', XDG_RUNTIME_DIR: '/run/user/1000' };
+}
+
+function wlrRandr(args) {
+  return execFileSync('wlr-randr', args, { encoding: 'utf8', timeout: 8000, env: wlrEnv() });
+}
+
 function getRealOutput() {
-  const raw = execSync(`${WLR_ENV} wlr-randr --json 2>/dev/null`, { encoding: 'utf8' });
+  const raw = wlrRandr(['--json']);
   const data = JSON.parse(raw);
   return data.find(o => !/^NOOP/i.test(o.name)) || data[0] || null;
 }
 
+function applyWlrSettings(outputName, settings) {
+  if (!guards.isSafeOutputName(outputName)) throw new Error('Invalid display output');
+  const checked = guards.validateDisplaySettings(settings);
+  if (checked.error) throw new Error(checked.error);
+  const { resolution, orientation, scale } = checked.value;
+  const args = ['--output', outputName];
+  if (resolution) args.push('--mode', resolution);
+  if (orientation) args.push('--transform', orientation);
+  if (scale !== undefined) args.push('--scale', String(scale));
+  if (args.length === 2) return;
+  wlrRandr(args);
+}
+
 // POST body: { power: "on" | "off" | "status" }. Status is public; control needs auth.
 async function handleDisplayPower(req, res) {
+  if (!requireAuth(req, res)) return;
   try {
     const { power } = JSON.parse(await readBody(req));
     if (power === 'status') {
       const output = getRealOutput();
       return sendJSON(res, 200, { power: output && output.enabled ? 'on' : 'off' });
     }
-    if (!requireAuth(req, res)) return;
+    if (power !== 'on' && power !== 'off') return sendJSON(res, 400, { error: 'Invalid power state' });
     const output = getRealOutput();
-    const name = output ? output.name : 'HDMI-A-1';
-    const flag = power === 'on' ? '--on' : '--off';
-    execSync(`${WLR_ENV} wlr-randr --output ${name} ${flag} 2>/dev/null`, { encoding: 'utf8' });
+    const name = output && guards.isSafeOutputName(output.name) ? output.name : 'HDMI-A-1';
+    wlrRandr(['--output', name, power === 'on' ? '--on' : '--off']);
     sendJSON(res, 200, { ok: true, power });
   } catch (e) {
-    sendJSON(res, 500, { error: e.message });
+    sendJSON(res, e.statusCode || 500, { error: e.statusCode === 413 ? 'Payload too large' : 'Display command failed' });
   }
 }
 
 function handleSystemInfo(req, res) {
+  if (!requireAuth(req, res)) return;
   try {
     const info = {};
     info.hostname = execSync('hostname', { encoding: 'utf8' }).trim();
@@ -654,7 +780,7 @@ function scheduleNightMode() {
         ? (hhmm >= start || hhmm < end)
         : (hhmm >= start && hhmm < end);
       const flag = shouldBeOff ? '--off' : '--on';
-      try { execSync(`${WLR_ENV} wlr-randr --output HDMI-A-1 ${flag} 2>/dev/null`); } catch (_) {}
+      try { wlrRandr(['--output', 'HDMI-A-1', flag]); } catch (_) {}
     }
 
     // Auto-update, once per day in the configured hour.
@@ -707,7 +833,7 @@ async function checkForUpdates(forceRefresh = false) {
     const result = {
       version: VERSION,
       latest: latestVersion,
-      updateAvailable: latestVersion !== VERSION,
+      updateAvailable: guards.isNewerVersion(latestVersion, VERSION),
       changelog: release.body || '',
       tarballUrl: release.tarball_url,
       publishedAt: release.published_at
@@ -738,24 +864,32 @@ async function performUpdate() {
       updateStatus = { state: 'complete', message: 'Already up to date', progress: 100 };
       return;
     }
-    if (!info.latest) throw new Error('No version info found in release');
+    if (!guards.parseSemver(info.latest)) throw new Error('No version info found in release');
 
     // Direct /archive/refs/tags URL avoids multi-hop API → codeload redirects.
+    // The tag is constrained to N.N.N so it cannot change the host or the path.
     const downloadUrl = `https://github.com/twitchkiddie/displayboard/archive/refs/tags/v${info.latest}.tar.gz`;
     updateStatus = { state: 'downloading', message: 'Downloading update...', progress: 10 };
     console.log('📥 Downloading update from:', downloadUrl);
 
     const tarballPath = '/tmp/displayboard-update.tar.gz';
-    await httpDownload(downloadUrl, tarballPath);
+    await httpDownload(downloadUrl, tarballPath, guards.UPDATE_HOSTS);
 
     updateStatus = { state: 'extracting', message: 'Extracting files...', progress: 30 };
     const extractDir = '/tmp/displayboard-update';
-    try { execSync(`rm -rf ${extractDir}`); } catch (_) {}
+    const listing = execFileSync('tar', ['-tzf', tarballPath], { encoding: 'utf8', timeout: 20000 });
+    for (const entry of listing.split('\n')) {
+      if (!entry) continue;
+      if (entry.startsWith('/') || entry.split('/').includes('..')) {
+        throw new Error('Unsafe archive entry');
+      }
+    }
+    try { execFileSync('rm', ['-rf', extractDir]); } catch (_) {}
     fs.mkdirSync(extractDir, { recursive: true });
-    execSync(`tar -xzf ${tarballPath} -C ${extractDir} --strip-components=1`);
+    execFileSync('tar', ['-xzf', tarballPath, '-C', extractDir, '--strip-components=1', '--no-absolute-names'], { timeout: 60000 });
 
     updateStatus = { state: 'backing-up', message: 'Creating backup...', progress: 50 };
-    try { execSync(`rm -rf ${BACKUP_DIR}`); } catch (_) {}
+    try { execFileSync('rm', ['-rf', BACKUP_DIR]); } catch (_) {}
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
     // Preserve user data + the backup folder itself.
@@ -763,7 +897,7 @@ async function performUpdate() {
     for (const file of fs.readdirSync(__dirname)) {
       if (preserve.includes(file) || file.startsWith('.')) continue;
       try {
-        execSync(`cp -r "${path.join(__dirname, file)}" "${path.join(BACKUP_DIR, file)}"`);
+        execFileSync('cp', ['-a', path.join(__dirname, file), path.join(BACKUP_DIR, file)]);
       } catch (e) { console.error(`Backup warning: ${file}:`, e.message); }
     }
 
@@ -780,13 +914,13 @@ async function performUpdate() {
     for (const file of fs.readdirSync(extractDir)) {
       if (preserve.includes(file)) continue;
       try {
-        execSync(`cp -r "${path.join(extractDir, file)}" "${path.join(__dirname, file)}"`);
+        execFileSync('cp', ['-a', path.join(extractDir, file), path.join(__dirname, file)]);
       } catch (e) { console.error(`Install warning: ${file}:`, e.message); }
     }
 
     if (packageChanged) {
       updateStatus = { state: 'installing', message: 'Installing dependencies...', progress: 85 };
-      try { execSync('npm install --production', { cwd: __dirname, timeout: 120000 }); }
+      try { execFileSync('npm', ['install', '--production'], { cwd: __dirname, timeout: 120000 }); }
       catch (e) { console.error('npm install error:', e.message); }
     }
 
@@ -810,13 +944,14 @@ async function performRollback() {
   if (!fs.existsSync(BACKUP_DIR)) throw new Error('No backup found. Cannot rollback.');
   console.log('⏪ Rolling back to previous version...');
   for (const file of fs.readdirSync(BACKUP_DIR)) {
-    execSync(`cp -r "${path.join(BACKUP_DIR, file)}" "${path.join(__dirname, file)}"`);
+    execFileSync('cp', ['-a', path.join(BACKUP_DIR, file), path.join(__dirname, file)]);
   }
   console.log('✅ Rollback complete. Restarting...');
   setTimeout(() => process.exit(0), 1000);
 }
 
 function handleVersionInfo(req, res) {
+  if (!requireAuth(req, res)) return;
   const forceRefresh = url.parse(req.url, true).query.force === 'true';
   checkForUpdates(forceRefresh)
     .then(info => sendJSON(res, 200, info))
@@ -831,6 +966,7 @@ function handleUpdate(req, res) {
 }
 
 function handleUpdateStatus(req, res) {
+  if (!requireAuth(req, res)) return;
   sendJSON(res, 200, updateStatus);
 }
 
@@ -842,34 +978,36 @@ function handleRollback(req, res) {
 }
 
 function handleBackupExists(req, res) {
+  if (!requireAuth(req, res)) return;
   sendJSON(res, 200, { exists: fs.existsSync(BACKUP_DIR) });
 }
 
 // ─── Hostname ────────────────────────────────────────────────────────────────
 function handleGetHostname(req, res) {
+  if (!requireAuth(req, res)) return;
   try {
-    sendJSON(res, 200, { hostname: execSync('hostname', { encoding: 'utf8' }).trim() });
-  } catch (err) {
-    sendJSON(res, 500, { error: err.message });
+    sendJSON(res, 200, { hostname: execFileSync('hostname', { encoding: 'utf8', timeout: 2000 }).trim() });
+  } catch (_) {
+    sendJSON(res, 500, { error: 'Could not read hostname' });
   }
 }
 
 async function handleSetHostname(req, res) {
   if (!requireAuth(req, res)) return;
   try {
-    const { hostname } = JSON.parse(await readBody(req));
-    if (!hostname || !/^[a-z0-9-]+$/.test(hostname)) {
+    const body = JSON.parse(await readBody(req));
+    const hostname = body && body.hostname;
+    if (!guards.isHostname(hostname)) {
       return sendJSON(res, 400, { error: 'Invalid hostname' });
     }
-    const oldHostname = execSync('hostname', { encoding: 'utf8' }).trim();
-    execSync(`echo '${hostname}' | sudo tee /etc/hostname`, { encoding: 'utf8' });
-    // Regex-escape the old hostname before splicing it into a sed pattern.
-    const escaped = oldHostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    execSync(`sudo sed -i 's/127\\.0\\.1\\.1.*${escaped}/127.0.1.1\\t${hostname}/g' /etc/hosts`, { encoding: 'utf8' });
+    const oldHostname = execFileSync('hostname', { encoding: 'utf8', timeout: 2000 }).trim();
+    execFileSync('sudo', ['tee', '/etc/hostname'], { input: hostname + '\n', encoding: 'utf8', timeout: 5000 });
+    const escaped = oldHostname.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    execFileSync('sudo', ['sed', '-i', `s/127\\.0\\.1\\.1.*${escaped}/127.0.1.1\\t${hostname}/`, '/etc/hosts'], { timeout: 5000 });
     console.log(`🖥️  Hostname changed: ${oldHostname} → ${hostname}`);
     sendJSON(res, 200, { ok: true, hostname });
   } catch (err) {
-    sendJSON(res, 500, { error: err.message });
+    sendJSON(res, err.statusCode || 500, { error: err.statusCode === 413 ? 'Payload too large' : 'Could not set hostname' });
   }
 }
 
@@ -880,6 +1018,7 @@ function handleVersion(req, res) {
 }
 
 function handleRefresh(req, res) {
+  if (!requireAuth(req, res)) return;
   configVersion++;
   sendJSON(res, 200, { ok: true, version: configVersion });
 }
@@ -887,6 +1026,7 @@ function handleRefresh(req, res) {
 // ─── Display info / settings ────────────────────────────────────────────────
 // Reads the current resolution/orientation/scale from the Wayland compositor.
 function handleDisplayInfo(req, res) {
+  if (!requireAuth(req, res)) return;
   try {
     const output = getRealOutput();
     if (!output) return sendJSON(res, 500, { error: 'no display output found' });
@@ -917,28 +1057,25 @@ function handleDisplayInfo(req, res) {
 async function handleDisplaySettings(req, res) {
   if (!requireAuth(req, res)) return;
   try {
-    const { resolution, orientation, scale } = JSON.parse(await readBody(req));
+    const body = JSON.parse(await readBody(req));
+    const checked = guards.validateDisplaySettings(body);
+    if (checked.error) return sendJSON(res, 400, { error: checked.error });
     const output = getRealOutput();
     if (!output) throw new Error('no display output found');
 
-    let cmd = `${WLR_ENV} wlr-randr --output ${output.name}`;
-    if (resolution) cmd += ` --mode ${resolution}`;
-    if (orientation !== undefined && orientation !== null) cmd += ` --transform ${orientation}`;
-    if (scale !== undefined && scale !== null) cmd += ` --scale ${scale}`;
-
-    execSync(cmd + ' 2>/dev/null', { encoding: 'utf8' });
-    console.log(`🖥️  Display settings applied: resolution=${resolution} orientation=${orientation} scale=${scale}`);
+    applyWlrSettings(output.name, checked.value);
+    console.log('🖥️  Display settings applied');
 
     config.display = config.display || {};
-    if (resolution) config.display.resolution = resolution;
-    if (orientation !== undefined && orientation !== null) config.display.orientation = orientation;
-    if (scale !== undefined && scale !== null) config.display.scale = parseFloat(scale);
+    if (checked.value.resolution) config.display.resolution = checked.value.resolution;
+    if (checked.value.orientation) config.display.orientation = checked.value.orientation;
+    if (checked.value.scale !== undefined) config.display.scale = checked.value.scale;
     saveConfigFile();
 
     sendJSON(res, 200, { ok: true });
   } catch (e) {
     console.error('Display settings error:', e.message);
-    sendJSON(res, 500, { error: e.message });
+    sendJSON(res, e.statusCode || 500, { error: e.statusCode === 413 ? 'Payload too large' : 'Display command failed' });
   }
 }
 
@@ -950,13 +1087,8 @@ function applyDisplaySettings() {
     const output = getRealOutput();
     if (!output) return;
 
-    let cmd = `${WLR_ENV} wlr-randr --output ${output.name}`;
-    if (resolution) cmd += ` --mode ${resolution}`;
-    if (orientation !== undefined && orientation !== null) cmd += ` --transform ${orientation}`;
-    if (scale !== undefined && scale !== null) cmd += ` --scale ${scale}`;
-
-    execSync(cmd + ' 2>/dev/null', { encoding: 'utf8' });
-    console.log(`🖥️  Startup display settings applied: resolution=${resolution} orientation=${orientation} scale=${scale}`);
+    applyWlrSettings(output.name, { resolution, orientation, scale });
+    console.log('🖥️  Startup display settings applied');
   } catch (e) {
     console.error('❌ applyDisplaySettings failed:', e.message);
   }
@@ -964,12 +1096,18 @@ function applyDisplaySettings() {
 
 // ─── Auth endpoint ───────────────────────────────────────────────────────────
 async function handleAuth(req, res) {
+  if (authLocked(req, res)) return;
   try {
-    const { pin } = JSON.parse(await readBody(req));
-    if (pin === config.adminPin) return sendJSON(res, 200, { ok: true });
+    const body = JSON.parse(await readBody(req));
+    const pin = body && body.pin != null ? String(body.pin) : '';
+    if (config.adminPin && guards.safeEqual(pin, String(config.adminPin))) {
+      authLimiter.success(clientIp(req));
+      return sendJSON(res, 200, { ok: true });
+    }
+    authLimiter.fail(clientIp(req));
     sendJSON(res, 401, { error: 'Invalid PIN' });
-  } catch (_) {
-    sendJSON(res, 400, { error: 'Bad request' });
+  } catch (e) {
+    sendJSON(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Payload too large' : 'Bad request' });
   }
 }
 
@@ -987,6 +1125,7 @@ function isApMode() {
 }
 
 function handleWifiStatus(req, res) {
+  if (!requireAuth(req, res)) return;
   try {
     if (isApMode()) {
       let status = { mode: 'ap', ssid: 'DisplayBoard-Setup', ip: '192.168.4.1', signal: null };
@@ -1050,11 +1189,11 @@ function handleWifiScan(req, res) {
     let networks = [];
     let usedNmcli = false;
     try {
-      execSync('nmcli device wifi rescan ifname wlan0 2>/dev/null || true', { timeout: 8000 });
-      const raw = execSync('nmcli -t -f SSID,SIGNAL,SECURITY device wifi list ifname wlan0 2>/dev/null', { encoding: 'utf8', timeout: 10000 });
+      try { execFileSync('nmcli', ['device', 'wifi', 'rescan', 'ifname', 'wlan0'], { timeout: 8000 }); } catch (_) {}
+      const raw = execFileSync('nmcli', ['-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list', 'ifname', 'wlan0'], { encoding: 'utf8', timeout: 10000 });
       const seen = new Set();
       for (const line of raw.split('\n')) {
-        const parts = line.split(':');
+        const parts = guards.splitNmcli(line);
         if (parts.length < 2) continue;
         const ssid = parts[0].trim();
         const signal = parseInt(parts[1]) || 0;
@@ -1069,7 +1208,8 @@ function handleWifiScan(req, res) {
     } catch (_) { /* fall through to iwlist */ }
 
     if (!usedNmcli || networks.length === 0) {
-      const raw = execSync('sudo iwlist wlan0 scan 2>/dev/null || echo ""', { encoding: 'utf8', timeout: 15000 });
+      let raw = '';
+      try { raw = execFileSync('sudo', ['iwlist', 'wlan0', 'scan'], { encoding: 'utf8', timeout: 15000 }); } catch (_) {}
       const cells = raw.split(/Cell \d+/);
       const seen = new Set();
       for (const cell of cells) {
@@ -1094,53 +1234,83 @@ function handleWifiScan(req, res) {
   }
 }
 
+function installNmConnection(ssid, password) {
+  // Write a root-owned keyfile instead of putting the PSK on an nmcli argv,
+  // where it would show up in the process list and in a shell command.
+  // psk-flags=0 stores it system-wide so NetworkManager re-authenticates
+  // without a polkit prompt over the kiosk.
+  const body = guards.buildNmConnection(ssid, password);
+  const name = guards.wifiConnectionName(ssid);
+  const tmp = path.join(os.tmpdir(), `${name}.nmconnection`);
+  const dest = `/etc/NetworkManager/system-connections/${name}.nmconnection`;
+  fs.writeFileSync(tmp, body, { mode: 0o600 });
+  try {
+    try { execFileSync('sudo', ['nmcli', 'connection', 'delete', ssid], { timeout: 5000 }); } catch (_) {}
+    execFileSync('sudo', ['cp', tmp, dest], { timeout: 5000 });
+    execFileSync('sudo', ['chmod', '600', dest], { timeout: 2000 });
+    execFileSync('sudo', ['nmcli', 'connection', 'load', dest], { timeout: 10000 });
+    try { execFileSync('sudo', ['nmcli', 'connection', 'up', ssid], { timeout: 15000 }); } catch (_) {}
+  } finally {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+  }
+}
+
+function installWpaSupplicant(ssid, password) {
+  const quote = (s) => '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+  const networkBlock = password
+    ? `network={\n    ssid=${quote(ssid)}\n    psk=${quote(password)}\n    key_mgmt=WPA-PSK\n}`
+    : `network={\n    ssid=${quote(ssid)}\n    key_mgmt=NONE\n}`;
+  const wpaConf = `ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=US\n\n${networkBlock}\n`;
+  const tmpFile = path.join(os.tmpdir(), 'displayboard-wpa.conf');
+  fs.writeFileSync(tmpFile, wpaConf, { mode: 0o600 });
+  try {
+    execFileSync('sudo', ['cp', tmpFile, '/etc/wpa_supplicant/wpa_supplicant.conf'], { timeout: 5000 });
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch (_) {}
+  }
+}
+
 async function handleWifiConnect(req, res) {
   if (!requireAuth(req, res)) return;
   try {
-    const { ssid, password } = JSON.parse(await readBody(req));
-    if (!ssid || typeof ssid !== 'string' || ssid.length > 64) {
-      return sendJSON(res, 400, { error: 'Invalid SSID' });
-    }
+    const body = JSON.parse(await readBody(req));
+    const ssid = body && body.ssid;
+    const password = body && body.password ? body.password : '';
+    const error = guards.validateWifiCredentials(ssid, password);
+    if (error) return sendJSON(res, 400, { error });
 
-    const hasNmcli = (() => { try { execSync('which nmcli', { timeout: 2000 }); return true; } catch (_) { return false; } })();
+    let hasNmcli = false;
+    try { execFileSync('which', ['nmcli'], { timeout: 2000 }); hasNmcli = true; } catch (_) {}
 
     if (hasNmcli) {
       if (isApMode()) {
         // In AP mode sudo isn't available to the pi user here; drop credentials
         // to a local file. ap-fallback.sh picks them up (as root) on teardown
         // and writes the NM connection before the next boot.
-        fs.writeFileSync(WIFI_PENDING_FILE, JSON.stringify({ ssid, password: password || '' }), { mode: 0o600 });
+        fs.writeFileSync(WIFI_PENDING_FILE, JSON.stringify({ ssid, password }), { mode: 0o600 });
       } else {
-        // Normal mode — nmcli handles everything.
-        // psk-flags=0 stores the PSK system-wide in the connection file so
-        // NetworkManager re-authenticates silently on reconnect without asking
-        // a session agent (which would otherwise pop a polkit password dialog
-        // on top of the kiosk). See https://networkmanager.dev/docs/api/latest/settings-802-11-wireless-security.html
-        execSync(`sudo nmcli connection delete "${ssid}" 2>/dev/null; true`, { timeout: 5000 });
-        if (password) {
-          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "${password}" wifi-sec.psk-flags 0 connection.autoconnect yes`, { timeout: 10000 });
-        } else {
-          execSync(`sudo nmcli connection add type wifi con-name "${ssid}" ssid "${ssid}" connection.autoconnect yes`, { timeout: 10000 });
-        }
-        execSync(`sudo nmcli connection up "${ssid}" 2>/dev/null || true`, { timeout: 15000 });
+        installNmConnection(ssid, password);
       }
     } else {
-      // Legacy fallback — write a wpa_supplicant.conf.
-      const networkBlock = password
-        ? `network={\n    ssid="${ssid}"\n    psk="${password}"\n    key_mgmt=WPA-PSK\n}`
-        : `network={\n    ssid="${ssid}"\n    key_mgmt=NONE\n}`;
-      const wpaConf = `ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ncountry=US\n\n${networkBlock}\n`;
-      const tmpFile = '/tmp/displayboard-wpa.conf';
-      fs.writeFileSync(tmpFile, wpaConf);
-      execSync(`sudo cp ${tmpFile} /etc/wpa_supplicant/wpa_supplicant.conf`);
-      fs.unlinkSync(tmpFile);
+      installWpaSupplicant(ssid, password);
     }
 
     sendJSON(res, 200, { ok: true, message: 'WiFi credentials saved. Rebooting...' });
-    setTimeout(() => { execAsync('sudo reboot', () => {}); }, 2000);
+    setTimeout(() => { execFile('sudo', ['reboot'], () => {}); }, 2000);
   } catch (e) {
-    sendJSON(res, 400, { error: e.message });
+    console.error('WiFi connect failed:', e.message);
+    sendJSON(res, e.statusCode || 400, { error: e.statusCode === 413 ? 'Payload too large' : 'Could not save WiFi credentials' });
   }
+}
+
+function handleSetupHint(req, res) {
+  let ip = '';
+  try {
+    ip = execFileSync('hostname', ['-I'], { encoding: 'utf8', timeout: 2000 }).trim().split(/\s+/)[0] || '';
+  } catch (_) {}
+  const hint = { ip };
+  if (config.adminPin === guards.DEFAULT_PIN) hint.defaultPin = guards.DEFAULT_PIN;
+  sendJSON(res, 200, hint);
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────
@@ -1169,6 +1339,7 @@ const server = http.createServer((req, res) => {
 
   // Authentication
   if (pathname === '/api/auth' && req.method === 'POST') return handleAuth(req, res);
+  if (pathname === '/api/setup-hint' && req.method === 'GET') return handleSetupHint(req, res);
 
   // Data endpoints
   if (pathname === '/api/weather-extended') return handleWeatherExtended(req, res);
@@ -1308,8 +1479,8 @@ function hardenNmConnections() {
   try {
     const NM_DIR = '/etc/NetworkManager/system-connections';
     // Root-owned 0600 — list via sudo.
-    const listing = execSync(`sudo ls "${NM_DIR}" 2>/dev/null || true`, { encoding: 'utf8', timeout: 5000 });
-    const files = listing.split('\n').map(s => s.trim()).filter(f => f.endsWith('.nmconnection'));
+    const listing = execFileSync('sudo', ['ls', NM_DIR], { encoding: 'utf8', timeout: 5000 });
+    const files = listing.split('\n').map(s => s.trim()).filter(f => f.endsWith('.nmconnection') && !f.includes('/') && !f.includes('..'));
     if (files.length === 0) return;
 
     let fixed = 0;
@@ -1317,15 +1488,15 @@ function hardenNmConnections() {
       const full = `${NM_DIR}/${name}`;
       // Only touch connections that actually have a PSK stored (8+ chars).
       const hasPsk = (() => {
-        try { execSync(`sudo grep -qE '^psk=.{8,}' "${full}"`, { timeout: 2000 }); return true; }
+        try { execFileSync('sudo', ['grep', '-qE', '^psk=.{8,}', full], { timeout: 2000 }); return true; }
         catch (_) { return false; }
       })();
       if (!hasPsk) continue;
       // Skip if already hardened.
-      try { execSync(`sudo grep -qE '^psk-flags=0$' "${full}"`, { timeout: 2000 }); continue; } catch (_) {}
+      try { execFileSync('sudo', ['grep', '-qE', '^psk-flags=0$', full], { timeout: 2000 }); continue; } catch (_) {}
 
-      execSync(`sudo sed -i '/^psk-flags=/d' "${full}"`, { timeout: 2000 });
-      execSync(`sudo sed -i '/^\\[wifi-security\\]/a psk-flags=0' "${full}"`, { timeout: 2000 });
+      execFileSync('sudo', ['sed', '-i', '/^psk-flags=/d', full], { timeout: 2000 });
+      execFileSync('sudo', ['sed', '-i', '/^\\[wifi-security\\]/a psk-flags=0', full], { timeout: 2000 });
       fixed++;
     }
 
