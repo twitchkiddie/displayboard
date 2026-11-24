@@ -14,7 +14,9 @@ curl -fsSL https://raw.githubusercontent.com/twitchkiddie/displayboard/main/inst
 
 That script clones the repo to `~/displayboard`, installs Node.js 20 + PM2 + hostapd/dnsmasq, sets up a Chromium kiosk autostart, and registers a systemd service for WiFi AP fallback. Reboot when prompted and the dashboard comes up on the attached HDMI display.
 
-The very first boot shows a welcome page pointing you at `http://<pi-ip>:3000/admin.html` with the default PIN **123456** — change it right away under the System tab.
+The very first boot shows a welcome page pointing you at `http://<pi-ip>:3000/admin.html` with the default PIN **123456** — change it right away under the System tab. The dashboard and welcome page only show that PIN while it is still the default. Failed PIN attempts are rate-limited (8 tries, then a 15 minute lockout per client).
+
+`config.json` (admin PIN, calendar URLs, iCloud token) and `wifi-pending.json` (a WiFi passphrase waiting to be applied) are not served over HTTP. Calendar URLs must be `http` or `https`. Loopback, link-local, and `.local` hosts are rejected; an address on your LAN is allowed.
 
 ## What it shows
 
@@ -43,6 +45,7 @@ Tabs:
 
 ```
 pi-server.js            Node HTTP server on :3000 — serves both UIs, the API, and static assets
+├── lib/guards.js       Validation, static-file confinement, and PIN compare
 ├── index.html          Dashboard (kiosk-facing)
 ├── admin.html          Admin panel (browser-facing, PIN-gated)
 ├── setup-welcome.html  First-run welcome (shown until location is configured)
@@ -69,7 +72,7 @@ All caches (`.calendar-cache.json`, `.weather-cache.json`) and backups (`.backup
 
 ## API
 
-The dashboard and admin panel share one JSON API, all under `/api/`. Unauthenticated endpoints are read-only; every mutation and every secret-bearing read wants `Authorization: Bearer <adminPin>`.
+The dashboard and admin panel share one JSON API, all under `/api/`. Unauthenticated endpoints are the kiosk's read-only data. Every mutation, and every read that reveals the PIN, calendar URLs, album token, WiFi status, or host details, wants `Authorization: Bearer <adminPin>`.
 
 ### Public
 
@@ -78,23 +81,25 @@ The dashboard and admin panel share one JSON API, all under `/api/`. Unauthentic
 | `/api/calendar` | GET | `{ events, lastUpdated }` — cached calendar events |
 | `/api/weather-extended` | GET | `{ current, forecast, lastUpdated }` — open-meteo snapshot |
 | `/api/photos` | GET | `{ photos: string[] }` — shuffled list of `/photos/*` URLs |
-| `/api/config` | GET | Full config when authenticated; sanitized (calendar URLs + iCloud token + adminPin redacted) otherwise |
+| `/api/config` | GET | Sanitized config (calendar URLs, iCloud token, and adminPin redacted). Send the bearer PIN for the full document |
 | `/api/version` | GET | `{ version: number }` — internal config/asset version (bumped on edits; dashboard polls to hot-reload) |
-| `/api/refresh` | GET | Bumps `/api/version` so open dashboards reload |
-| `/api/system-info` | GET | hostname / model / uptime / memory / disk / CPU temp / Node version / IP / OS |
-| `/api/hostname` | GET | `{ hostname }` |
-| `/api/display-info` | GET | Current `wlr-randr` output (enabled, resolution, refresh, orientation, scale + available options) |
-| `/api/display-power` | POST `{ power: "status" }` | `{ power: "on" \| "off" }` — status is public; set-state requires auth |
-| `/api/wifi/status` | GET | Client-mode `{ mode, ssid, ip, signal }` or AP-mode `{ mode: "ap", ssid, ip }` |
-| `/api/version-info` | GET | `{ version, latest, updateAvailable, changelog, tarballUrl, publishedAt }` from GitHub releases (cached 1h; `?force=true` refreshes) |
-| `/api/update-status` | GET | `{ state, message, progress }` — live update progress |
-| `/api/backup-exists` | GET | `{ exists: boolean }` |
-| `/api/auth` | POST `{ pin }` | 200 on match, 401 otherwise |
+| `/api/setup-hint` | GET | `{ ip, defaultPin? }` — LAN address, plus the default PIN only while it is unchanged |
+| `/api/auth` | POST `{ pin }` | 200 on match, 401 otherwise, 429 after repeated failures |
 
 ### Authenticated
 
 | Endpoint | Method | Purpose |
 |---|---|---|
+| `/api/config` | GET | Full config, including secrets. Without the bearer token the same path is the public sanitized view |
+| `/api/refresh` | GET | Bumps `/api/version` so open dashboards reload |
+| `/api/system-info` | GET | hostname / model / uptime / memory / disk / CPU temp / Node version / IP / OS |
+| `/api/hostname` | GET | `{ hostname }` |
+| `/api/display-info` | GET | Current `wlr-randr` output (enabled, resolution, refresh, orientation, scale + available options) |
+| `/api/display-power` | POST `{ power: "status" }` | `{ power: "on" \| "off" }` |
+| `/api/wifi/status` | GET | Client-mode `{ mode, ssid, ip, signal }` or AP-mode `{ mode: "ap", ssid, ip }` |
+| `/api/version-info` | GET | `{ version, latest, updateAvailable, changelog, tarballUrl, publishedAt }` from GitHub releases (cached 1h; `?force=true` refreshes). Updates install only when the release version is strictly newer |
+| `/api/update-status` | GET | `{ state, message, progress }` — live update progress |
+| `/api/backup-exists` | GET | `{ exists: boolean }` |
 | `/api/config` | POST | Deep-merge a config patch. `adminPin` is ignored here (use `/api/change-pin`). |
 | `/api/change-pin` | POST `{ newPin }` | Change admin PIN (4–8 digits) |
 | `/api/display-power` | POST `{ power: "on"\|"off" }` | HDMI on/off via `wlr-randr` |
@@ -110,7 +115,17 @@ The dashboard and admin panel share one JSON API, all under `/api/`. Unauthentic
 | `/api/update` | POST | Pull the latest GitHub release, back up, install, restart |
 | `/api/rollback` | POST | Restore from `.backup/` and restart |
 | `/api/wifi/scan` | GET | Nearby SSIDs via `nmcli` (with `iwlist` fallback) — cached scan served in AP mode |
-| `/api/wifi/connect` | POST `{ ssid, password }` | Save credentials via `nmcli connection add`, reboot. In AP mode, writes to `wifi-pending.json`; `ap-fallback.sh` picks it up on teardown. |
+| `/api/wifi/connect` | POST `{ ssid, password }` | Save credentials in a NetworkManager keyfile (passphrase is not placed on a shell command line), then reboot. In AP mode, writes to `wifi-pending.json`; `ap-fallback.sh` picks it up on teardown. |
+
+## Development
+
+```bash
+npm install
+npm test
+npm run lint
+```
+
+`npm test` runs the built-in Node test runner (`test/`). `npm run lint` syntax-checks the JavaScript with `node --check`. There is no separate formatter.
 
 ## Configuration
 

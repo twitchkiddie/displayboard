@@ -64,7 +64,7 @@ async function updateWeather() {
         // Sun/Moon
         document.getElementById('sunrise').textContent = data.current.sunrise || '--';
         document.getElementById('sunset').textContent = data.current.sunset || '--';
-        document.getElementById('moon-phase').innerHTML = data.current.moonPhase || '--';
+        document.getElementById('moon-phase').textContent = data.current.moonPhase || '--';
 
         const moonIconEl = document.querySelector('#sun-moon .moon-icon');
         if (moonIconEl && data.current.moonIcon) {
@@ -80,7 +80,11 @@ async function updateWeather() {
                 forecastEl.querySelector('.forecast-label').textContent = day.label;
                 const wiClass = svgToWeatherIcon(day.icon);
                 forecastEl.querySelector('.forecast-icon').innerHTML = `<i class="wi ${wiClass}"></i>`;
-                forecastEl.querySelector('.forecast-precip').innerHTML = `<i class="wi wi-raindrop"></i> ${day.precip}%`;
+                const precipEl = forecastEl.querySelector('.forecast-precip');
+                precipEl.replaceChildren();
+                const drop = document.createElement('i');
+                drop.className = 'wi wi-raindrop';
+                precipEl.append(drop, ' ' + (Number(day.precip) || 0) + '%');
                 forecastEl.querySelector('.high').textContent = `${day.high}°`;
                 forecastEl.querySelector('.low').textContent = `${day.low}°`;
             }
@@ -195,7 +199,7 @@ function renderCalendar(events) {
             } else {
                 dateEvents.forEach(event => {
                     const calClass = getCalendarClass(event.calendar);
-                    const calColor = getCalendarColor(event.calendar);
+                    const calColor = safeCssColor(getCalendarColor(event.calendar));
                     const colorStyle = calColor ? ` style="border-left-color: ${escapeHtml(calColor)};"` : '';
                     
                     if (event.allDay) {
@@ -256,7 +260,7 @@ function parseDateString(dateStr) {
 
 // Get CSS class for calendar type
 function getCalendarClass(calendar) {
-    const cal = calendar.toLowerCase();
+    const cal = String(calendar || '').toLowerCase();
     if (cal.includes('family')) return 'family';
     if (cal.includes('swim')) return 'swim';
     if (cal.includes('crew')) return 'crew';
@@ -265,7 +269,12 @@ function getCalendarClass(calendar) {
 }
 
 // Get calendar color from config map
+function safeCssColor(color) {
+    return /^#[0-9a-fA-F]{3,8}$/.test(color || '') ? color : '';
+}
+
 function getCalendarColor(calendarName) {
+    if (!calendarName) return null;
     if (calendarColorMap[calendarName]) {
         return calendarColorMap[calendarName];
     }
@@ -277,6 +286,10 @@ function getCalendarColor(calendarName) {
         }
     }
     return null;
+}
+
+function cssBackground(url) {
+    return "url('" + String(url || '').replace(/\\/g, '\\\\').replace(/'/g, '\\\'') + "')";
 }
 
 // Load photos list. The server already shuffles, so we just kick off the slideshow.
@@ -334,13 +347,13 @@ function showNextPhoto() {
     nextDiv.style.transition = `opacity ${crossfadeDuration}ms ease-in-out`;
     
     if (currentPhotoLayer === 'main') {
-        nextDiv.style.backgroundImage = `url('${newUrl}')`;
+        nextDiv.style.backgroundImage = cssBackground(newUrl);
         if (photoStyle === 'kenburns') resetKenburnsAnimation(nextDiv);
         nextDiv.style.opacity = 1;
         mainDiv.style.opacity = 0;
         currentPhotoLayer = 'next';
     } else {
-        mainDiv.style.backgroundImage = `url('${newUrl}')`;
+        mainDiv.style.backgroundImage = cssBackground(newUrl);
         if (photoStyle === 'kenburns') resetKenburnsAnimation(mainDiv);
         mainDiv.style.opacity = 1;
         nextDiv.style.opacity = 0;

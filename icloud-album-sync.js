@@ -10,8 +10,15 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+const { isAlbumToken, isIcloudHost } = require('./lib/guards');
+
 const ALBUM_TOKEN = process.argv[2];
 const OUTPUT_DIR = process.argv[3] || path.join(__dirname, 'photos');
+
+if (!isAlbumToken(ALBUM_TOKEN)) {
+  console.error('Invalid album token');
+  process.exit(1);
+}
 
 function httpsPost(url, body) {
   return new Promise((resolve, reject) => {
@@ -31,6 +38,10 @@ function httpsPost(url, body) {
       // Handle redirect via X-Apple-MMe-Host header
       if (res.headers['x-apple-mme-host']) {
         const newHost = res.headers['x-apple-mme-host'];
+        if (!isIcloudHost(newHost)) {
+          res.resume();
+          return reject(new Error('Unexpected album host'));
+        }
         const newUrl = `https://${newHost}${parsed.pathname}`;
         // Drain response
         res.resume();
@@ -68,6 +79,7 @@ async function getBaseUrl() {
   try {
     const result = await httpsPost(`${base}/webstream`, { streamCtag: null });
     if (result['X-Apple-MMe-Host']) {
+      if (!isIcloudHost(result['X-Apple-MMe-Host'])) throw new Error('Unexpected album host');
       return `https://${result['X-Apple-MMe-Host']}/${ALBUM_TOKEN}/sharedstreams`;
     }
     return base;
@@ -77,7 +89,7 @@ async function getBaseUrl() {
 }
 
 async function main() {
-  console.log(`📸 Fetching iCloud shared album: ${ALBUM_TOKEN}`);
+  console.log('📸 Fetching iCloud shared album');
   console.log(`📁 Output: ${OUTPUT_DIR}\n`);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
@@ -86,7 +98,7 @@ async function main() {
 
   // Get correct host
   const baseUrl = await getBaseUrl();
-  console.log(`🔗 API: ${baseUrl}\n`);
+  console.log(`🔗 API host: ${new URL(baseUrl).host}\n`);
 
   // Get stream metadata
   const stream = await httpsPost(`${baseUrl}/webstream`, { streamCtag: null });
