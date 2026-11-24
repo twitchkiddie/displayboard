@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm test --if-present
+      - run: npm run lint --if-present
+      - name: Syntax check
+        run: |
+          set -e
+          for f in pi-server.js calendar-all.js icloud-album-sync.js dashboard.js display-enhancements.js lib/guards.js; do
+            if [ -f "$f" ]; then node --check "$f"; fi
+          done
+          bash -n scripts/ap-fallback.sh
+          bash -n scripts/wifi-setup.sh
+          bash -n setup.sh
+          bash -n install.sh
+      - run: npm audit --audit-level=high
